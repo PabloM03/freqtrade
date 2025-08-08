@@ -1,0 +1,116 @@
+========================
+ Freqtrade + systemd (Conda) - MyServer
+========================
+Usuario: ubuntu
+Bot dir: /home/ubuntu/freqtrade
+Conda env: freqtrade
+Conda bin: /home/ubuntu/miniconda3/bin/conda
+Config: /home/ubuntu/freqtrade/config.json
+API: http://0.0.0.0:8080  (usuario/clave en config.json)
+
+----------------------------------------
+1) Crear/instalar el servicio systemd
+----------------------------------------
+sudo tee /etc/systemd/system/freqtrade.service > /dev/null <<'EOF'
+[Unit]
+Description=Freqtrade bot (conda env)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/freqtrade
+ExecStart=/home/ubuntu/miniconda3/bin/conda run -n freqtrade --no-capture-output \
+  freqtrade trade -c /home/ubuntu/freqtrade/config.json
+Restart=always
+RestartSec=10
+
+# Endurecimiento opcional (si da problemas, deja estas líneas comentadas)
+#NoNewPrivileges=true
+#ProtectSystem=full
+#ProtectHome=true
+#PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Recargar systemd y habilitar arranque automático
+sudo systemctl daemon-reload
+sudo systemctl enable --now freqtrade
+
+----------------------------------------
+2) Control del servicio
+----------------------------------------
+# Iniciar / detener / reiniciar / estado
+sudo systemctl start freqtrade
+sudo systemctl stop freqtrade
+sudo systemctl restart freqtrade
+systemctl status freqtrade -n 50
+
+# Comprobar si arranca al boot
+systemctl is-enabled freqtrade    # debería mostrar: enabled
+
+# Deshabilitar que arranque al boot (y pararlo)
+sudo systemctl disable --now freqtrade
+
+----------------------------------------
+3) Logs (en vivo y filtrados)
+----------------------------------------
+# Seguir logs en tiempo real (con colores)
+journalctl -u freqtrade -f
+
+# Últimas N líneas
+journalctl -u freqtrade -n 200 --no-pager
+
+# Rango de tiempo
+journalctl -u freqtrade --since "today 09:00" --until "now"
+
+# Saltar al final y seguir
+journalctl -u freqtrade -e -f
+
+----------------------------------------
+4) Editar el servicio y aplicar cambios
+----------------------------------------
+# Editar (abre el unit completo)
+sudo systemctl edit --full freqtrade
+
+# Tras guardar cambios:
+sudo systemctl daemon-reload
+sudo systemctl restart freqtrade
+
+----------------------------------------
+5) Verificación de proceso/puerto API
+----------------------------------------
+# Ver proceso activo
+ps -ef | grep -i freqtrade
+
+# Ver puerto escuchando (debería mostrar 0.0.0.0:8080)
+ss -ltnp | grep 8080
+
+# Probar API local (desde la VM)
+# Sustituye usuario/clave por los de tu config.json (api_server.username / password)
+curl -u PabloM03:0115 http://127.0.0.1:8080/api/v1/ping
+
+# Probar API remota (desde tu PC)
+# Sustituye por tu IP pública actual si cambia
+curl.exe -u PabloM03:0115 http://151.145.35.106:8080/api/v1/ping
+
+----------------------------------------
+6) Parar definitivamente y eliminar el servicio
+----------------------------------------
+sudo systemctl disable --now freqtrade
+sudo rm /etc/systemd/system/freqtrade.service
+sudo systemctl daemon-reload
+
+----------------------------------------
+7) (Opcional) Ejecutar manualmente dentro del conda env
+----------------------------------------
+# Lanzar en primer plano con colores (útil para debug interactivo)
+conda activate freqtrade
+cd /home/ubuntu/freqtrade
+freqtrade trade -c config.json
+
+# Dejarlo en segundo plano manualmente no se recomienda (usa systemd + journalctl).
