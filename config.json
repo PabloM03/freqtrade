@@ -2,14 +2,16 @@
     "$schema": "https://schema.freqtrade.io/schema.json",
     "max_open_trades": 3,
     "stake_currency": "USDT",
-    "stake_amount": "unlimited",
+    "stake_amount": 25,
     "tradable_balance_ratio": 0.99,
     "fiat_display_currency": "USD",
-    "timeframe": "1h",
+    "timeframe": "5m",
     "dry_run": true,
+    "db_url": "sqlite:///trades.sqlite",
     "dry_run_wallet": 1000,
     "cancel_open_orders_on_exit": false,
     "trading_mode": "spot",
+  "strategy": "CombinedBinHAndCluc",
     "unfilledtimeout": {
       "entry": 10,
       "exit": 10,
@@ -38,20 +40,30 @@
       "ccxt_config": {},
       "ccxt_async_config": {},
       "pair_whitelist": [
-        "BTC/USDT",
-        "ETH/USDT"
+	"BTC/USDT",
+	"ETH/USDT",
+	"SOL/USDT",
+        "PEPE/USDT",
+        "DOGE/USDT",
+        "SHIB/USDT",
+        "BONK/USDT",
+        "WIF/USDT",
+        "TURBO/USDT"
       ],
       "pair_blacklist": [
-        "BNB/.*"
+        "BNB/.*",
+	".*(UP|DOWN|BEAR|BULL).*",
+   	".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
+    	".*/(BUSD|TUSD|USDC)"
       ]
     },
     "pairlists": [
       {
-        "method": "VolumePairList",
-        "number_assets": 20,
+	"method": "StaticPairList",
+        "number_assets": 9,
         "sort_key": "quoteVolume",
         "min_value": 0,
-        "refresh_period": 1800
+        "refresh_period": 900
       }
     ],
     "telegram": {
