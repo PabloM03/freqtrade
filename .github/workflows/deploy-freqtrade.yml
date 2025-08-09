@@ -2,7 +2,7 @@ name: Deploy Freqtrade
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "develop" ]
     paths-ignore:
       - "README.md"
       - "**/*.md"
