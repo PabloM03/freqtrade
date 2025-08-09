@@ -34,7 +34,7 @@ jobs:
           ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Sincronizar código al servidor con rsync
+      - name: Sincronizar código al servidor con rsync (sin borrar config.json)
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -42,10 +42,10 @@ jobs:
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
           RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
-                          --exclude config/config.json \
+                          --exclude config.json \
                           --exclude logs/ \
                           --exclude **/__pycache__/"
-          rsync -az --delete $RSYNC_EXCLUDES \
+          rsync -az $RSYNC_EXCLUDES \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
