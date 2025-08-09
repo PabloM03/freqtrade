@@ -19,9 +19,10 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    Entradas combinadas (BinHV45 + Cluc + RSI) + Breakout fuerte.
-    Salidas: trailing + señales técnicas, con retención mínima si no hay giro claro
-             y salida por sobreextensión en rallies.
+    Estrategia combinada con:
+    - Compras por BinHV45, Cluc y RSI sobreventa.
+    - Ventas más agresivas en picos claros.
+    - Trailing Stop sensible para capturar ganancias.
     """
 
     minimal_roi = {"0": 0.0}
@@ -33,13 +34,13 @@ class CombinedBinHAndCluc(IStrategy):
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
 
-    # Trailing Stop
+    # Trailing Stop más sensible
     trailing_stop = True
-    trailing_stop_positive = 0.02           # 2% por debajo del máximo
-    trailing_stop_positive_offset = 0.05    # se activa a partir de +5%
+    trailing_stop_positive = 0.018          # 1.8% por debajo del máximo
+    trailing_stop_positive_offset = 0.04    # se activa a partir de +4% de beneficio
     trailing_only_offset_is_reached = True
 
-    # Retención mínima
+    # Retención mínima de velas
     MIN_HOLD_BARS = 4
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -50,19 +51,18 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['closedelta'] = (dataframe['close'] - dataframe['close'].shift()).abs()
         dataframe['tail'] = (dataframe['close'] - dataframe['low']).abs()
 
-        # --- ClucMay72018 ---
+        # --- Cluc ---
         bollinger = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
         dataframe['bb_lowerband'] = bollinger['lower']
         dataframe['bb_middleband'] = bollinger['mid']
         dataframe['bb_upperband'] = bollinger['upper']
 
-        # Medias y RSI
+        # Medias, RSI y fuerza direccional
         dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
         dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
-
-        # Fuerza direccional para giros
+        dataframe['rsi_prev'] = dataframe['rsi'].shift(1)
         dataframe['adx'] = ta.ADX(dataframe, timeperiod=14)
         dataframe['plus_di'] = ta.PLUS_DI(dataframe, timeperiod=14)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
@@ -72,37 +72,29 @@ class CombinedBinHAndCluc(IStrategy):
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # --- BinHV45 (moderado) ---
+                # BinHV45
                 dataframe['lower'].shift().gt(0) &
-                dataframe['bbdelta'].gt(dataframe['close'] * 0.0035) &
-                dataframe['closedelta'].gt(dataframe['close'] * 0.010) &
-                dataframe['tail'].lt(dataframe['bbdelta'] * 0.35) &
+                dataframe['bbdelta'].gt(dataframe['close'] * 0.0033) &
+                dataframe['closedelta'].gt(dataframe['close'] * 0.009) &
+                dataframe['tail'].lt(dataframe['bbdelta'] * 0.36) &
                 dataframe['close'].lt(dataframe['lower'].shift()) &
                 dataframe['close'].le(dataframe['close'].shift())
             )
             |
             (
-                # --- Cluc (moderado) ---
+                # Cluc
                 (dataframe['close'] < dataframe['ema_slow']) &
-                (dataframe['close'] < 0.997 * dataframe['bb_lowerband']) &
+                (dataframe['close'] < 0.9985 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0) &
-                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 5))
+                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 5.5))
             )
             |
             (
-                # --- Sobreventa controlada ---
-                (dataframe['rsi'] < 33) &
+                # RSI sobreventa
+                (dataframe['rsi'] < 34) &
                 (dataframe['close'] < dataframe['ema_slow']) &
-                (dataframe['close'] < 1.01 * dataframe['bb_lowerband']) &
+                (dataframe['close'] < 1.012 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0)
-            )
-            |
-            (
-                # --- NUEVO: Breakout fuerte por momentum ---
-                (dataframe['close'] > dataframe['bb_upperband']) &                         # rompe banda superior
-                (dataframe['close'] > dataframe['close'].shift(1) * 1.01) &               # +1% en la última vela
-                (dataframe['volume'] > dataframe['volume_mean_slow'] * 2) &               # volumen elevado
-                (dataframe['rsi'] > 60) & (dataframe['rsi'] < 80)                          # fuerza, sin sobrecompra extrema
             ),
             'buy'
         ] = 1
@@ -111,25 +103,23 @@ class CombinedBinHAndCluc(IStrategy):
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # 1) Cruce por encima de la banda media + algo de fuerza
+                # Cruce sobre la banda media con fuerza
                 (dataframe['close'] > dataframe['bb_middleband']) &
                 (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &
-                (dataframe['rsi'] > 60) &
+                (dataframe['rsi'] > 58) &
                 (dataframe['volume'] > dataframe['volume_mean_slow'])
             )
             |
             (
-                # 2) Pérdida de momentum: baja de EMA20 tras estar encima
-                (dataframe['close'] < dataframe['ema_fast']) &
-                (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
-                (dataframe['rsi'] > 53)
+                # Sobrecompra fuerte y giro
+                (dataframe['rsi_prev'] >= 75) & (dataframe['rsi'] < 75)
             )
             |
             (
-                # --- NUEVO: Salida por sobreextensión del rally ---
-                (dataframe['rsi'] > 80) &                                                # sobrecompra fuerte
-                (dataframe['close'] > dataframe['bb_upperband'] * 1.02) &                # 2% por encima de banda sup.
-                (dataframe['close'] < dataframe['close'].shift(1))                       # primera señal de retroceso
+                # Pérdida de momentum (EMA20)
+                (dataframe['close'] < dataframe['ema_fast']) &
+                (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
+                (dataframe['rsi'] > 52)
             ),
             'sell'
         ] = 1
@@ -157,19 +147,16 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
-        """
-        1) Nunca forzar venta por debajo del precio de compra.
-        2) Retención mínima de 4 velas salvo giro fuerte.
-        3) TP discreto si aún no se activó trailing y vamos >= +1.5%.
-        """
         if current_rate < trade.open_rate:
             return None
 
+        # Retención mínima salvo giro fuerte
         if self._bars_elapsed(trade, current_time) < self.MIN_HOLD_BARS:
             if not self._strong_bearish_reversal(pair):
                 return None
 
-        if current_profit is not None and current_profit >= 0.015:
-            return "tp_1_5_percent"
+        # TP discreto moderado
+        if current_profit is not None and current_profit >= 0.012:
+            return "tp_1_2_percent"
 
         return None
