@@ -19,10 +19,11 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    Estrategia combinada con:
-    - Compras por BinHV45, Cluc y RSI sobreventa.
-    - Ventas más agresivas en picos claros.
-    - Trailing Stop sensible para capturar ganancias.
+    Entradas combinadas (BinHV45 + Cluc + RSI).
+    Salidas:
+      - Más ventas en picos claros (proximidad a BB superior / RSI alto / giro).
+      - Menos 'breakeven exits': evita cerrar justo tras recuperación leve.
+      - Trailing stop para dejar correr ganancias.
     """
 
     minimal_roi = {"0": 0.0}
@@ -34,14 +35,16 @@ class CombinedBinHAndCluc(IStrategy):
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
 
-    # Trailing Stop más sensible
+    # Trailing Stop sensible
     trailing_stop = True
     trailing_stop_positive = 0.018          # 1.8% por debajo del máximo
-    trailing_stop_positive_offset = 0.04    # se activa a partir de +4% de beneficio
+    trailing_stop_positive_offset = 0.04    # se activa a +4%
     trailing_only_offset_is_reached = True
 
-    # Retención mínima de velas
+    # Retención mínima y “recuperación”
     MIN_HOLD_BARS = 4
+    RECOVERY_BLOCK_BARS = 24       # ~2h en 5m
+    RECOVERY_MIN_PROFIT = 0.006    # 0.6%
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # --- BinHV45 ---
@@ -57,7 +60,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['bb_middleband'] = bollinger['mid']
         dataframe['bb_upperband'] = bollinger['upper']
 
-        # Medias, RSI y fuerza direccional
+        # Medias, RSI, DI/ADX y ATR
         dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
         dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
@@ -66,13 +69,17 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['adx'] = ta.ADX(dataframe, timeperiod=14)
         dataframe['plus_di'] = ta.PLUS_DI(dataframe, timeperiod=14)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
+        dataframe['atr'] = ta.ATR(dataframe, timeperiod=14)
+
+        # Proximidad a banda superior (para detectar picos)
+        dataframe['near_upper'] = (dataframe['close'] >= 0.995 * dataframe['bb_upperband']).astype(int)
 
         return dataframe
 
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # BinHV45
+                # BinHV45 (moderado)
                 dataframe['lower'].shift().gt(0) &
                 dataframe['bbdelta'].gt(dataframe['close'] * 0.0033) &
                 dataframe['closedelta'].gt(dataframe['close'] * 0.009) &
@@ -82,7 +89,7 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # Cluc
+                # Cluc (moderado)
                 (dataframe['close'] < dataframe['ema_slow']) &
                 (dataframe['close'] < 0.9985 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0) &
@@ -90,7 +97,7 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # RSI sobreventa
+                # RSI sobreventa controlada
                 (dataframe['rsi'] < 34) &
                 (dataframe['close'] < dataframe['ema_slow']) &
                 (dataframe['close'] < 1.012 * dataframe['bb_lowerband']) &
@@ -103,22 +110,20 @@ class CombinedBinHAndCluc(IStrategy):
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # Cruce sobre la banda media con fuerza
-                (dataframe['close'] > dataframe['bb_middleband']) &
-                (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &
-                (dataframe['rsi'] > 58) &
-                (dataframe['volume'] > dataframe['volume_mean_slow'])
+                # 1) Pico claro: cerca de BB superior + RSI alto
+                (dataframe['near_upper'] == 1) &
+                (dataframe['rsi'] >= 68)
             )
             |
             (
-                # Sobrecompra fuerte y giro
+                # 2) Giro desde sobrecompra
                 (dataframe['rsi_prev'] >= 75) & (dataframe['rsi'] < 75)
             )
             |
             (
-                # Pérdida de momentum (EMA20)
-                (dataframe['close'] < dataframe['ema_fast']) &
-                (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
+                # 3) Pérdida de momentum con filtro ATR (evita ruido)
+                (dataframe['close'] < (dataframe['ema_fast'] - 0.5 * dataframe['atr'])) &
+                (dataframe['close'].shift(1) >= (dataframe['ema_fast'].shift(1) - 0.5 * dataframe['atr'].shift(1))) &
                 (dataframe['rsi'] > 52)
             ),
             'sell'
@@ -147,16 +152,32 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
+        # Nunca forzar venta por debajo del precio de compra
         if current_rate < trade.open_rate:
             return None
 
-        # Retención mínima salvo giro fuerte
-        if self._bars_elapsed(trade, current_time) < self.MIN_HOLD_BARS:
-            if not self._strong_bearish_reversal(pair):
+        bars = self._bars_elapsed(trade, current_time)
+
+        # 1) Retención mínima salvo giro fuerte
+        if bars < self.MIN_HOLD_BARS and not self._strong_bearish_reversal(pair):
+            return None
+
+        # 2) Guardado de recuperación: si la operación empezó mal y sólo ha recuperado poco,
+        #    evita cerrar con +0.1% / +0.3% – deja margen para pillar tendencia.
+        if current_profit is not None and 0.0 <= current_profit < self.RECOVERY_MIN_PROFIT:
+            if bars < self.RECOVERY_BLOCK_BARS and not self._strong_bearish_reversal(pair):
                 return None
 
-        # TP discreto moderado
-        if current_profit is not None and current_profit >= 0.012:
-            return "tp_1_2_percent"
+        # 3) TP discreto si ya hay buen tramo y se observa ligera debilidad
+        if current_profit is not None and current_profit >= 0.015:
+            # pide una pequeña señal de giro para evitar cortar rallies muy fuertes
+            try:
+                df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
+                last = df.iloc[-1]
+                if (last['rsi'] < last['rsi_prev']) or (last['close'] < last['bb_upperband']):
+                    return "tp_1_5_percent_weakness"
+            except Exception:
+                # si no hay df, aún así toma beneficio
+                return "tp_1_5_percent"
 
         return None
