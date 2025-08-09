@@ -19,8 +19,9 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    Entradas combinadas (BinHV45 + Cluc + RSI).
-    Salidas: trailing + señales técnicas, con retención mínima si no hay giro claro.
+    Entradas combinadas (BinHV45 + Cluc + RSI) + Breakout fuerte.
+    Salidas: trailing + señales técnicas, con retención mínima si no hay giro claro
+             y salida por sobreextensión en rallies.
     """
 
     minimal_roi = {"0": 0.0}
@@ -38,8 +39,8 @@ class CombinedBinHAndCluc(IStrategy):
     trailing_stop_positive_offset = 0.05    # se activa a partir de +5%
     trailing_only_offset_is_reached = True
 
-    # Retención mínima (ligeramente menor)
-    MIN_HOLD_BARS = 4  # antes 5
+    # Retención mínima
+    MIN_HOLD_BARS = 4
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # --- BinHV45 ---
@@ -94,6 +95,14 @@ class CombinedBinHAndCluc(IStrategy):
                 (dataframe['close'] < dataframe['ema_slow']) &
                 (dataframe['close'] < 1.01 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0)
+            )
+            |
+            (
+                # --- NUEVO: Breakout fuerte por momentum ---
+                (dataframe['close'] > dataframe['bb_upperband']) &                         # rompe banda superior
+                (dataframe['close'] > dataframe['close'].shift(1) * 1.01) &               # +1% en la última vela
+                (dataframe['volume'] > dataframe['volume_mean_slow'] * 2) &               # volumen elevado
+                (dataframe['rsi'] > 60) & (dataframe['rsi'] < 80)                          # fuerza, sin sobrecompra extrema
             ),
             'buy'
         ] = 1
@@ -105,7 +114,7 @@ class CombinedBinHAndCluc(IStrategy):
                 # 1) Cruce por encima de la banda media + algo de fuerza
                 (dataframe['close'] > dataframe['bb_middleband']) &
                 (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &
-                (dataframe['rsi'] > 60) &   # antes 62
+                (dataframe['rsi'] > 60) &
                 (dataframe['volume'] > dataframe['volume_mean_slow'])
             )
             |
@@ -113,7 +122,14 @@ class CombinedBinHAndCluc(IStrategy):
                 # 2) Pérdida de momentum: baja de EMA20 tras estar encima
                 (dataframe['close'] < dataframe['ema_fast']) &
                 (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
-                (dataframe['rsi'] > 53)     # antes 55
+                (dataframe['rsi'] > 53)
+            )
+            |
+            (
+                # --- NUEVO: Salida por sobreextensión del rally ---
+                (dataframe['rsi'] > 80) &                                                # sobrecompra fuerte
+                (dataframe['close'] > dataframe['bb_upperband'] * 1.02) &                # 2% por encima de banda sup.
+                (dataframe['close'] < dataframe['close'].shift(1))                       # primera señal de retroceso
             ),
             'sell'
         ] = 1
