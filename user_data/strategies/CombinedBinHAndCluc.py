@@ -38,8 +38,8 @@ class CombinedBinHAndCluc(IStrategy):
     trailing_stop_positive_offset = 0.05    # se activa a partir de +5%
     trailing_only_offset_is_reached = True
 
-    # --- Nuevo: retención mínima ---
-    MIN_HOLD_BARS = 5  # velas mínimas a mantener si no hay giro fuerte
+    # Retención mínima (ligeramente menor)
+    MIN_HOLD_BARS = 4  # antes 5
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # --- BinHV45 ---
@@ -61,7 +61,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
 
-        # --- Nuevo: fuerza direccional para detectar giros ---
+        # Fuerza direccional para giros
         dataframe['adx'] = ta.ADX(dataframe, timeperiod=14)
         dataframe['plus_di'] = ta.PLUS_DI(dataframe, timeperiod=14)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
@@ -100,13 +100,12 @@ class CombinedBinHAndCluc(IStrategy):
         return dataframe
 
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Salidas menos nerviosas (quitado TP por cruce RSI 70)
         dataframe.loc[
             (
                 # 1) Cruce por encima de la banda media + algo de fuerza
                 (dataframe['close'] > dataframe['bb_middleband']) &
                 (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &
-                (dataframe['rsi'] > 62) &
+                (dataframe['rsi'] > 60) &   # antes 62
                 (dataframe['volume'] > dataframe['volume_mean_slow'])
             )
             |
@@ -114,20 +113,18 @@ class CombinedBinHAndCluc(IStrategy):
                 # 2) Pérdida de momentum: baja de EMA20 tras estar encima
                 (dataframe['close'] < dataframe['ema_fast']) &
                 (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
-                (dataframe['rsi'] > 55)
+                (dataframe['rsi'] > 53)     # antes 55
             ),
             'sell'
         ] = 1
         return dataframe
 
     def _bars_elapsed(self, trade: Trade, current_time: datetime) -> int:
-        # Calcula cuántas velas han pasado desde la apertura
         tf_minutes = int(self.timeframe.rstrip('m'))
         seconds = (current_time - trade.open_date_utc).total_seconds()
         return int(max(0, seconds) // (tf_minutes * 60))
 
     def _strong_bearish_reversal(self, pair: str) -> bool:
-        # Usa los últimos indicadores para detectar giro bajista
         try:
             df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
             last = df.iloc[-1]
@@ -146,19 +143,16 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         """
         1) Nunca forzar venta por debajo del precio de compra.
-        2) Retención mínima de 5 velas salvo giro fuerte ( -DI > +DI, ADX>20, RSI<55 ).
+        2) Retención mínima de 4 velas salvo giro fuerte.
         3) TP discreto si aún no se activó trailing y vamos >= +1.5%.
         """
-        # 1) No vender con pérdida forzada desde aquí (stoploss/trailing siguen funcionando)
         if current_rate < trade.open_rate:
             return None
 
-        # 2) Retener durante las primeras N velas salvo giro fuerte
         if self._bars_elapsed(trade, current_time) < self.MIN_HOLD_BARS:
             if not self._strong_bearish_reversal(pair):
                 return None
 
-        # 3) TP discreto para aumentar algo la frecuencia de cierres
         if current_profit is not None and current_profit >= 0.015:
             return "tp_1_5_percent"
 
