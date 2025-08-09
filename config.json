@@ -51,20 +51,22 @@
         "TURBO/USDT"
       ],
       "pair_blacklist": [
-        "BNB/.*",
-	".*(UP|DOWN|BEAR|BULL).*",
-   	".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
-    	".*/(BUSD|TUSD|USDC)"
-      ]
+	"BNB/.*",
+  	".*(UP|DOWN|BEAR|BULL).*",
+  	".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
+
+  	"^(USDC|BUSD|TUSD|FDUSD)/.*",   // como BASE
+  	".*/(USDC|BUSD|TUSD|FDUSD)$"    // como QUOTE
+    ]
     },
     "pairlists": [
       {
-	"method": "StaticPairList",
+	"method": "VolumePairList",
         "number_assets": 9,
         "sort_key": "quoteVolume",
         "min_value": 0,
         "refresh_period": 900
-      }
+      },
     ],
     "telegram": {
       "enabled": false,
