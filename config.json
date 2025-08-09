@@ -55,8 +55,8 @@
   	".*(UP|DOWN|BEAR|BULL).*",
   	".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
 
-  	"^(USDC|BUSD|TUSD|FDUSD)/.*",   // como BASE
-  	".*/(USDC|BUSD|TUSD|FDUSD)$"    // como QUOTE
+  	"^(USDC|BUSD|TUSD|FDUSD)/.*",   
+  	".*/(USDC|BUSD|TUSD|FDUSD)$"    
     ]
     },
     "pairlists": [
@@ -66,7 +66,7 @@
         "sort_key": "quoteVolume",
         "min_value": 0,
         "refresh_period": 900
-      },
+      }
     ],
     "telegram": {
       "enabled": false,
