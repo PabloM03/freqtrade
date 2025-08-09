@@ -22,6 +22,7 @@ class CombinedBinHAndCluc(IStrategy):
     Basado en tu versión:
     - Entradas igual que las que me diste.
     - Ventas más filtradas: RSI más alto + cruce + volumen.
+    - Añadido Trailing Stop para dejar correr ganancias.
     """
 
     minimal_roi = {
@@ -34,6 +35,12 @@ class CombinedBinHAndCluc(IStrategy):
     use_sell_signal = True
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
+
+    # >>> NUEVO: Trailing Stop <<<
+    trailing_stop = True
+    trailing_stop_positive = 0.03            # 3% por debajo del máximo
+    trailing_stop_positive_offset = 0.10     # se activa a partir de +10% de beneficio
+    trailing_only_offset_is_reached = True   # no sigue hasta alcanzar el offset
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # --- BinHV45 ---
@@ -103,9 +110,10 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         """
         Bloquea ventas si el precio actual está por debajo del precio de compra.
+        (No bloquea el Trailing Stop cuando ya está activo por encima del open_rate.)
         """
         if current_rate < trade.open_rate:
             return None  # No vender todavía
 
-        # Dejar que la lógica de 'populate_sell_trend' se encargue si el precio es >= open_rate
+        # Dejar que la lógica de 'populate_sell_trend' / trailing / ROI se encargue si el precio es >= open_rate
         return None
