@@ -51,7 +51,11 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
-          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore --exclude config/config.json --exclude **/__pycache__/"
+          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
+                          --exclude config/config.json \
+                          --exclude user_data/ \
+                          --exclude logs/ \
+                          --exclude **/__pycache__/"
           rsync -az --delete $RSYNC_EXCLUDES \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/"
@@ -73,16 +77,15 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
-          set -e
-          # Retry simple por si tarda en arrancar
-          for i in 1 2 3 4 5; do
+          set -euo pipefail
+          for i in {1..5}; do
             if ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl is-active --quiet ${SERVICE_NAME}"; then
               echo "✅ ${SERVICE_NAME} está activo"
               exit 0
             fi
             echo "Esperando arranque (${i}/5)..."
             sleep 3
-          end
+          done
           echo "❌ ${SERVICE_NAME} NO está activo. Últimos logs:"
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
             "sudo journalctl -u ${SERVICE_NAME} -n 120 --no-pager || true"
