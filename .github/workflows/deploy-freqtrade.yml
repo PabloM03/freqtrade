@@ -34,20 +34,7 @@ jobs:
           ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Ver qué ruta usa el servicio
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl cat ${SERVICE_NAME} || true"
-
-      - name: Generar marca de commit desplegado
-        run: echo "${GITHUB_SHA}" > DEPLOYED_COMMIT
-
-      # ⬇️ Sincroniza el core, pero NO user_data (para control fino)
-      - name: Sincronizar core al servidor con rsync
+      - name: Sincronizar código al servidor con rsync
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -56,49 +43,11 @@ jobs:
         run: |
           RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
                           --exclude config/config.json \
-                          --exclude user_data/ \
                           --exclude logs/ \
                           --exclude **/__pycache__/"
           rsync -az --delete $RSYNC_EXCLUDES \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
-            ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/"
-
-      # ⬇️ Sincroniza SOLO estrategias
-      - name: Sincronizar estrategias (user_data/strategies)
-        if: always()
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
-            ./user_data/strategies/ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/user_data/strategies/"
-
-      - name: Copiar DEPLOYED_COMMIT al servidor
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          scp -i ~/.ssh/deploy_key -P "${SSH_PORT}" ./DEPLOYED_COMMIT \
-            "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/DEPLOYED_COMMIT"
-
-      - name: Verificar checksum de la estrategia (local vs remoto)
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          set -e
-          FILE="user_data/strategies/CombinedBinHAndCluc.py"
-          echo "Local md5:"
-          md5sum "$FILE" || shasum "$FILE"
-          echo "Remote md5:"
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "md5sum ${TARGET_DIR}/app/${FILE} || shasum ${TARGET_DIR}/app/${FILE}"
+            ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
       - name: Reiniciar servicio
         env:
@@ -109,28 +58,3 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
             "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
-
-      - name: Verificar servicio (con logs si falla)
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          set -euo pipefail
-          for i in {1..8}; do
-            if ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl is-active --quiet ${SERVICE_NAME}"; then
-              echo "✅ ${SERVICE_NAME} está activo"
-              ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-                "echo 'Corriendo commit:' && cat ${TARGET_DIR}/app/DEPLOYED_COMMIT || true; \
-                 echo 'Estrategia en servidor:' && ls -la ${TARGET_DIR}/app/user_data/strategies/ | sed -n '1,50p'"
-              exit 0
-            fi
-            echo "Esperando arranque (${i}/8)..."
-            sleep 3
-          done
-          echo "❌ ${SERVICE_NAME} NO está activo. Últimos logs:"
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo journalctl -u ${SERVICE_NAME} -n 200 --no-pager || true"
-          exit 1
