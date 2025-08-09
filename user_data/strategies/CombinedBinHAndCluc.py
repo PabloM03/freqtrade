@@ -33,10 +33,10 @@ class CombinedBinHAndCluc(IStrategy):
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
 
-    # Trailing Stop más sensible
+    # Trailing Stop - menos agresivo (reduce cierres prematuros)
     trailing_stop = True
-    trailing_stop_positive = 0.02           # 2% por debajo del máximo
-    trailing_stop_positive_offset = 0.05    # se activa a partir de +5% de beneficio
+    trailing_stop_positive = 0.025          # antes 0.02
+    trailing_stop_positive_offset = 0.07    # antes 0.05 (activa trailing a partir de +7%)
     trailing_only_offset_is_reached = True
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -67,8 +67,8 @@ class CombinedBinHAndCluc(IStrategy):
             (
                 # --- BinHV45 (moderado) ---
                 dataframe['lower'].shift().gt(0) &
-                dataframe['bbdelta'].gt(dataframe['close'] * 0.0035) &       # menos laxo que 0.003
-                dataframe['closedelta'].gt(dataframe['close'] * 0.010) &     # menos laxo que 0.008
+                dataframe['bbdelta'].gt(dataframe['close'] * 0.0035) &
+                dataframe['closedelta'].gt(dataframe['close'] * 0.010) &
                 dataframe['tail'].lt(dataframe['bbdelta'] * 0.35) &
                 dataframe['close'].lt(dataframe['lower'].shift()) &
                 dataframe['close'].le(dataframe['close'].shift())
@@ -77,9 +77,9 @@ class CombinedBinHAndCluc(IStrategy):
             (
                 # --- Cluc (moderado) ---
                 (dataframe['close'] < dataframe['ema_slow']) &
-                (dataframe['close'] < 0.997 * dataframe['bb_lowerband']) &   # era 0.998
+                (dataframe['close'] < 0.997 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0) &
-                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 5))  # era *6
+                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 5))
             )
             |
             (
@@ -94,26 +94,28 @@ class CombinedBinHAndCluc(IStrategy):
         return dataframe
 
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Señales técnicas de salida (más frecuentes que antes)
+        # Salidas con debilitamiento (reduce “demasiadas ventas”)
         dataframe.loc[
             (
-                # 1) Cruce por encima de la banda media + fuerza
+                # 1) Cruce por encima de la banda media PERO con RSI debilitándose
                 (dataframe['close'] > dataframe['bb_middleband']) &
                 (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &
-                (dataframe['rsi'] > 60) &
+                (dataframe['rsi'] > 62) &                     # era 60
+                (dataframe['rsi'] < dataframe['rsi_prev']) &  # RSI bajando (confirmación de debilidad)
                 (dataframe['volume'] > dataframe['volume_mean_slow'])
             )
             |
             (
-                # 2) Take profit por debilidad: RSI cruza abajo de 70
-                (dataframe['rsi_prev'] >= 70) & (dataframe['rsi'] < 70)
+                # 2) Take profit por debilidad: RSI cruza abajo desde zona alta
+                (dataframe['rsi_prev'] >= 72) & (dataframe['rsi'] < 68) &     # más exigente
+                (dataframe['close'] < dataframe['bb_upperband'])
             )
             |
             (
-                # 3) Pérdida de momentum: cierre bajo EMA20 tras estar por encima
+                # 3) Pérdida de momentum: EMA20 cruce bajista + RSI no fuerte
                 (dataframe['close'] < dataframe['ema_fast']) &
                 (dataframe['close'].shift(1) >= dataframe['ema_fast'].shift(1)) &
-                (dataframe['rsi'] > 50)
+                (dataframe['rsi'] < 60)                                        # antes >50
             ),
             'sell'
         ] = 1
@@ -130,14 +132,14 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         """
         1) Nunca forzar venta por debajo del precio de compra.
-        2) Tomar beneficio discreto si llega a >= +1.5% (por si el trailing aún no se activó).
+        2) TP discreto algo más alto para evitar cierres demasiado rápidos.
         """
-        # 1) No vender con pérdida forzada desde aquí (stoploss/trailing siguen funcionando)
+        # 1) No vender con pérdida desde aquí (stoploss/trailing siguen funcionando)
         if current_rate < trade.open_rate:
             return None
 
-        # 2) TP discreto moderado para aumentar frecuencia de cierres
-        if current_profit is not None and current_profit >= 0.015:
-            return "tp_1_5_percent"
+        # 2) TP discreto moderado (subido para vender menos)
+        if current_profit is not None and current_profit >= 0.025:  # antes 0.015
+            return "tp_2_5_percent"
 
         return None
