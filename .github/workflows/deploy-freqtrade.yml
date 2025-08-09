@@ -27,6 +27,7 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
@@ -41,8 +42,9 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
+          set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "mkdir -p ${TARGET_DIR}/app ${TARGET_DIR}/config ${TARGET_DIR}/logs && ls -la ${TARGET_DIR}"
+            "mkdir -p ${TARGET_DIR}/app && ls -la ${TARGET_DIR}"
 
       - name: Sincronizar código al servidor con rsync
         env:
@@ -51,14 +53,44 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
-          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
-                          --exclude config/config.json \
-                          --exclude user_data/ \
-                          --exclude logs/ \
-                          --exclude **/__pycache__/"
-          rsync -az --delete $RSYNC_EXCLUDES \
+          set -euo pipefail
+          COMMIT=$(git rev-parse --short HEAD)
+
+          # Excluimos cosas pesadas / locales / sensibles.
+          RSYNC_EXCLUDES=(
+            "--exclude" ".git/"
+            "--exclude" ".github/"
+            "--exclude" ".gitignore"
+            "--exclude" "logs/"
+            "--exclude" "**/__pycache__/"
+            "--exclude" "user_data/data/"                 # datos de mercado descargados
+            "--exclude" "user_data/backtest_results/"
+            "--exclude" "user_data/hyperopts/"
+            "--exclude" "user_data/hyperopt_results/"
+            "--exclude" "user_data/notebooks/"
+            "--exclude" "user_data/temp/"
+            "--exclude" "user_data/plot/"
+            "--exclude" "user_data/backtesting-plot/"
+            "--exclude" "user_data/price_alerts.json"
+            "--exclude" "user_data/.cache/"
+            "--exclude" "build/"
+            "--exclude" "dist/"
+            "--exclude" "venv/"
+            "--exclude" ".venv/"
+            "--exclude" "*.pyc"
+            "--exclude" "*.pyo"
+            # ⚠️ Por seguridad mantenemos config.json en el servidor.
+            "--exclude" "config.json"
+          )
+
+          # Sube TODO menos lo excluido (incluye user_data/strategies)
+          rsync -az --delete "${RSYNC_EXCLUDES[@]}" \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/"
+
+          # Graba el commit desplegado (útil para comprobar qué versión corre)
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            "echo ${COMMIT} > ${TARGET_DIR}/app/DEPLOYED_COMMIT && cat ${TARGET_DIR}/app/DEPLOYED_COMMIT"
 
       - name: Reiniciar servicio
         env:
@@ -67,8 +99,9 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
+          set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
+            "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 50 --no-pager || true"
 
       - name: Verificar servicio (con logs si falla)
         env:
@@ -78,15 +111,17 @@ jobs:
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
           set -euo pipefail
-          for i in {1..5}; do
+          for i in {1..8}; do
             if ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl is-active --quiet ${SERVICE_NAME}"; then
               echo "✅ ${SERVICE_NAME} está activo"
+              ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+                "echo 'Corriendo commit:' && cat ${TARGET_DIR}/app/DEPLOYED_COMMIT || true"
               exit 0
             fi
-            echo "Esperando arranque (${i}/5)..."
+            echo "Esperando arranque (${i}/8)..."
             sleep 3
           done
           echo "❌ ${SERVICE_NAME} NO está activo. Últimos logs:"
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo journalctl -u ${SERVICE_NAME} -n 120 --no-pager || true"
+            "sudo journalctl -u ${SERVICE_NAME} -n 200 --no-pager || true"
           exit 1
