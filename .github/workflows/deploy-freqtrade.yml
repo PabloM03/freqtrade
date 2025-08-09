@@ -2,7 +2,7 @@ name: Deploy Freqtrade
 
 on:
   push:
-    branches: [ "main" ]   # cámbialo si despliegas otra rama
+    branches: [ "main" ]
     paths-ignore:
       - "README.md"
       - "**/*.md"
@@ -31,7 +31,6 @@ jobs:
           chmod 700 ~/.ssh
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # Confiar en el host
           ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
@@ -57,34 +56,6 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/app/"
 
-      - name: Parar servicio antes de actualizar (opcional pero recomendado)
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo systemctl stop ${SERVICE_NAME} || true"
-
-      - name: Post-deploy (dependencias/scripts opcionales)
-        if: always()
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          # Si necesitas algo como pip install, migrations, etc., hazlo aquí.
-          # Ejemplos (descomenta/ajusta si aplica):
-          # ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-          #   "cd ${TARGET_DIR}/app && /home/ubuntu/miniconda3/bin/python -m pip install -r requirements.txt --upgrade"
-          #
-          # Si tienes un script propio:
-          # ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-          #   "bash ${TARGET_DIR}/app/scripts/prestart.sh || true"
-          echo "Post-deploy: nada que ejecutar"
-
       - name: Reiniciar servicio
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -93,19 +64,9 @@ jobs:
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo systemctl daemon-reload || true && sudo systemctl start ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
+            "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
 
-      - name: Verificar proceso (sanity check)
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sleep 2 && systemctl is-active --quiet ${SERVICE_NAME} && echo '✅ Servicio activo' || (echo '❌ Servicio NO activo' && exit 1)"
-
-            - name: Verificar servicio y mostrar logs si falla
+      - name: Verificar servicio (con logs si falla)
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -113,11 +74,16 @@ jobs:
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
           set -e
-          if ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl is-active --quiet ${SERVICE_NAME}"; then
-            echo "✅ ${SERVICE_NAME} está activo"
-          else
-            echo "❌ ${SERVICE_NAME} NO está activo. Mostrando últimos logs..."
-            ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-              "sudo journalctl -u ${SERVICE_NAME} -n 120 --no-pager || true"
-            exit 1
-          fi
+          # Retry simple por si tarda en arrancar
+          for i in 1 2 3 4 5; do
+            if ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "systemctl is-active --quiet ${SERVICE_NAME}"; then
+              echo "✅ ${SERVICE_NAME} está activo"
+              exit 0
+            fi
+            echo "Esperando arranque (${i}/5)..."
+            sleep 3
+          end
+          echo "❌ ${SERVICE_NAME} NO está activo. Últimos logs:"
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            "sudo journalctl -u ${SERVICE_NAME} -n 120 --no-pager || true"
+          exit 1
