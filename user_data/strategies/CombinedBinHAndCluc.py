@@ -5,6 +5,9 @@ import numpy as np
 import talib.abstract as ta
 from freqtrade.strategy.interface import IStrategy
 from pandas import DataFrame
+from datetime import datetime
+from typing import Optional
+from freqtrade.persistence import Trade
 
 
 def bollinger_bands(stock_price, window_size, num_of_std):
@@ -77,7 +80,7 @@ class CombinedBinHAndCluc(IStrategy):
         return dataframe
 
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Ventas más filtradas:
+        # Mantener filtro técnico, pero sin 'buy_price'
         dataframe.loc[
             (
                 (dataframe['close'] > dataframe['bb_middleband']) &
@@ -88,3 +91,21 @@ class CombinedBinHAndCluc(IStrategy):
             'sell'
         ] = 1
         return dataframe
+
+    def custom_exit(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        **kwargs
+    ) -> Optional[str]:
+        """
+        Bloquea ventas si el precio actual está por debajo del precio de compra.
+        """
+        if current_rate < trade.open_rate:
+            return None  # No vender todavía
+
+        # Dejar que la lógica de 'populate_sell_trend' se encargue si el precio es >= open_rate
+        return None
