@@ -20,13 +20,14 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 class CombinedBinHAndCluc(IStrategy):
     """
     Basado en tu versión:
-    - Entradas igual que las que me diste.
-    - Ventas más filtradas: RSI más alto + cruce + volumen.
-    - Añadido Trailing Stop para dejar correr ganancias.
+    - Entradas igual que las que me diste, con umbrales algo más laxos para aumentar operaciones.
+    - Nueva entrada por sobreventa (RSI).
+    - Ventas filtradas + Trailing Stop para dejar correr ganancias.
     """
 
+    # ROI a 0 para no cortar ganancias por beneficio fijo y dejar trabajar al trailing/ventas técnicas
     minimal_roi = {
-        "0": 0.05
+        "0": 0.0
     }
     stoploss = -0.05
     timeframe = '5m'
@@ -36,7 +37,7 @@ class CombinedBinHAndCluc(IStrategy):
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
 
-    # >>> NUEVO: Trailing Stop <<<
+    # Trailing Stop
     trailing_stop = True
     trailing_stop_positive = 0.03            # 3% por debajo del máximo
     trailing_stop_positive_offset = 0.10     # se activa a partir de +10% de beneficio
@@ -58,7 +59,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
 
-        # RSI para filtrar salidas
+        # RSI (entradas y salidas)
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
 
         return dataframe
@@ -66,33 +67,41 @@ class CombinedBinHAndCluc(IStrategy):
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # --- BinHV45 ---
+                # --- BinHV45 (ligeramente más laxo) ---
                 dataframe['lower'].shift().gt(0) &
-                dataframe['bbdelta'].gt(dataframe['close'] * 0.004) &
-                dataframe['closedelta'].gt(dataframe['close'] * 0.012) &
-                dataframe['tail'].lt(dataframe['bbdelta'] * 0.30) &
+                dataframe['bbdelta'].gt(dataframe['close'] * 0.003) &          # antes 0.004
+                dataframe['closedelta'].gt(dataframe['close'] * 0.008) &       # antes 0.012
+                dataframe['tail'].lt(dataframe['bbdelta'] * 0.35) &            # antes 0.30
                 dataframe['close'].lt(dataframe['lower'].shift()) &
                 dataframe['close'].le(dataframe['close'].shift())
             )
             |
             (
-                # --- Cluc ---
+                # --- Cluc (más permisivo) ---
                 (dataframe['close'] < dataframe['ema_slow']) &
-                (dataframe['close'] < 0.995 * dataframe['bb_lowerband']) &
+                (dataframe['close'] < 0.998 * dataframe['bb_lowerband']) &     # antes 0.995
                 (dataframe['volume'] > 0) &
-                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 4))
+                (dataframe['volume'] < (dataframe['volume_mean_slow'].shift(1) * 6))  # antes *4
+            )
+            |
+            (
+                # --- Nueva entrada por sobreventa ---
+                (dataframe['rsi'] < 35) &
+                (dataframe['close'] < dataframe['ema_slow']) &
+                (dataframe['close'] < 1.01 * dataframe['bb_lowerband']) &      # cerca de la banda baja
+                (dataframe['volume'] > 0)
             ),
             'buy'
         ] = 1
         return dataframe
 
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Mantener filtro técnico, pero sin 'buy_price'
+        # Ventas más filtradas (aguanta un poco más que antes)
         dataframe.loc[
             (
                 (dataframe['close'] > dataframe['bb_middleband']) &
                 (dataframe['close'].shift(1) <= dataframe['bb_middleband'].shift(1)) &  # cruce al alza
-                (dataframe['rsi'] > 60) &
+                (dataframe['rsi'] > 65) &                                               # antes 60
                 (dataframe['volume'] > dataframe['volume_mean_slow'])
             ),
             'sell'
@@ -115,5 +124,5 @@ class CombinedBinHAndCluc(IStrategy):
         if current_rate < trade.open_rate:
             return None  # No vender todavía
 
-        # Dejar que la lógica de 'populate_sell_trend' / trailing / ROI se encargue si el precio es >= open_rate
+        # Dejar que la lógica de 'populate_sell_trend' / trailing se encargue si el precio es >= open_rate
         return None
