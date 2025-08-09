@@ -19,8 +19,8 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    Entradas combinadas (BinHV45 + Cluc + RSI).
-    Salidas más conservadoras: trailing menos agresivo y ventas técnicas filtradas.
+    Compras combinadas (BinHV45 + Cluc + RSI).
+    Ventas MUY conservadoras: deja correr beneficios y solo cierra en picos claros o giro fuerte.
     """
 
     minimal_roi = {"0": 0.0}
@@ -32,14 +32,14 @@ class CombinedBinHAndCluc(IStrategy):
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
 
-    # Trailing Stop más conservador
+    # Trailing menos agresivo (deja correr más)
     trailing_stop = True
-    trailing_stop_positive = 0.026         # 2.6% por debajo del máximo
-    trailing_stop_positive_offset = 0.055  # activa a partir de +5.5%
+    trailing_stop_positive = 0.030        # 3% bajo el máximo
+    trailing_stop_positive_offset = 0.070 # activa a partir de +7%
     trailing_only_offset_is_reached = True
 
-    # Retención mínima de velas
-    MIN_HOLD_BARS = 4
+    # Retención mínima de velas (aguanta más antes de evaluar ventas discrecionales)
+    MIN_HOLD_BARS = 6
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # --- BinHV45 ---
@@ -49,13 +49,13 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['closedelta'] = (dataframe['close'] - dataframe['close'].shift()).abs()
         dataframe['tail'] = (dataframe['close'] - dataframe['low']).abs()
 
-        # --- Cluc / Bandas de Bollinger completas ---
+        # --- Bollinger completo ---
         boll = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
         dataframe['bb_lowerband'] = boll['lower']
         dataframe['bb_middleband'] = boll['mid']
         dataframe['bb_upperband'] = boll['upper']
 
-        # Medias, RSI, ADX/DI, ATR
+        # Medias / fuerza / volatilidad
         dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
         dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
@@ -69,15 +69,15 @@ class CombinedBinHAndCluc(IStrategy):
 
         dataframe['atr'] = ta.ATR(dataframe, timeperiod=14)
 
-        # Cerca de la banda superior (pico probable)
-        dataframe['near_upper'] = (dataframe['close'] >= dataframe['bb_upperband'] * 0.995).astype(int)
+        # muy cerca de banda superior
+        dataframe['near_upper'] = (dataframe['close'] >= dataframe['bb_upperband'] * 0.997).astype(int)
 
         return dataframe
 
+    # ————— ENTRADAS (igual que antes, ligerísimamente activas) —————
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # BinHV45 (moderado)
                 dataframe['lower'].shift().gt(0) &
                 dataframe['bbdelta'].gt(dataframe['close'] * 0.0035) &
                 dataframe['closedelta'].gt(dataframe['close'] * 0.010) &
@@ -87,7 +87,6 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # Cluc (moderado)
                 (dataframe['close'] < dataframe['ema_slow']) &
                 (dataframe['close'] < 0.997 * dataframe['bb_lowerband']) &
                 (dataframe['volume'] > 0) &
@@ -95,7 +94,6 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # Sobreventa controlada
                 (dataframe['rsi'] < 33) &
                 (dataframe['close'] < dataframe['ema_slow']) &
                 (dataframe['close'] < 1.01 * dataframe['bb_lowerband']) &
@@ -105,26 +103,27 @@ class CombinedBinHAndCluc(IStrategy):
         ] = 1
         return dataframe
 
+    # ————— VENTAS (mucho menos frecuentes) —————
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Ventas menos frecuentes: exigimos señales más “claras”
         dataframe.loc[
             (
-                # Pico claro: muy cerca de BB superior + RSI alto
+                # Pico claro: muy cerca de la banda superior y RSI muy alto
                 (dataframe['near_upper'] == 1) &
-                (dataframe['rsi'] >= 72)
+                (dataframe['rsi'] >= 78)
             )
             |
             (
-                # Giro desde sobrecompra solo si hay tendencia real (evita falsas alarmas)
-                (dataframe['rsi_prev'] >= 76) & (dataframe['rsi'] < 76) &
-                (dataframe['adx'] > 20)
+                # Giro desde sobrecompra EXTREMA con tendencia (evita ruido)
+                (dataframe['rsi_prev'] >= 82) & (dataframe['rsi'] < 82) &
+                (dataframe['adx'] > 22)
             )
             |
             (
-                # Pérdida de momentum: cae bajo EMA20 ajustado por volatilidad
-                (dataframe['close'] < (dataframe['ema_fast'] - 0.5 * dataframe['atr'])) &
-                (dataframe['close'].shift(1) >= (dataframe['ema_fast'].shift(1) - 0.5 * dataframe['atr'].shift(1))) &
-                (dataframe['rsi'] > 52)
+                # Reversal real: cruza por debajo de EMA20 - 1*ATR y DI- > DI+
+                (dataframe['close'] < (dataframe['ema_fast'] - 1.0 * dataframe['atr'])) &
+                (dataframe['close'].shift(1) >= (dataframe['ema_fast'].shift(1) - 1.0 * dataframe['atr'].shift(1))) &
+                (dataframe['minus_di'] > dataframe['plus_di']) &
+                (dataframe['rsi'] > 55)
             ),
             'sell'
         ] = 1
@@ -139,7 +138,7 @@ class CombinedBinHAndCluc(IStrategy):
         try:
             df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
             last = df.iloc[-1]
-            return (last['minus_di'] > last['plus_di']) and (last['adx'] > 20) and (last['rsi'] < 55)
+            return (last['minus_di'] > last['plus_di']) and (last['adx'] > 22) and (last['rsi'] < 55)
         except Exception:
             return False
 
@@ -152,7 +151,7 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
-        # Nunca forzar venta por debajo del precio de compra
+        # No vender por debajo del precio de compra
         if current_rate < trade.open_rate:
             return None
 
@@ -161,15 +160,15 @@ class CombinedBinHAndCluc(IStrategy):
             if not self._strong_bearish_reversal(pair):
                 return None
 
-        # TP discreto algo más alto para reducir cierres tempranos
-        if current_profit is not None and current_profit >= 0.021:
+        # TP discreto aún más alto para evitar cierres tempranos
+        if current_profit is not None and current_profit >= 0.028:
             try:
                 df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
                 last = df.iloc[-1]
-                # Solo tomar TP si se ve debilidad
-                if (last['rsi'] < last['rsi_prev']) or (last['close'] < last['bb_upperband']):
-                    return "tp_2_1_percent_weakness"
+                # Solo tomar TP si hay señales de debilidad
+                if (last['rsi'] < last['rsi_prev']) or (last['minus_di'] > last['plus_di']):
+                    return "tp_2_8_percent_weakness"
             except Exception:
-                return "tp_2_1_percent"
+                return "tp_2_8_percent"
 
         return None
