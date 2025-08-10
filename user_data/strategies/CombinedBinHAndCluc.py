@@ -85,8 +85,7 @@ class CombinedBinHAndCluc(IStrategy):
 
         # Momentum/pendiente y extremos locales
         dataframe['roc5'] = ta.ROC(dataframe, timeperiod=5)
-        # Ventana más amplia para mínimos, conservando el nombre del campo
-        dataframe['ll_10'] = dataframe['low'].rolling(14).min()
+        dataframe['ll_10'] = dataframe['low'].rolling(10).min()
         dataframe['hh_20'] = dataframe['high'].rolling(20).max()
 
         # ATR y variaciones (para anti-cuchillo y crash guard)
@@ -108,42 +107,37 @@ class CombinedBinHAndCluc(IStrategy):
     # ---------------------- ENTRADAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
-            (dataframe['pct_1'] > -0.8) &                      # antes -0.6: más permisivo
-            (dataframe['pct_3'] > -1.5) &                      # antes -1.2
+            (dataframe['pct_1'] > -0.6) &                      # última vela no es caída fuerte
+            (dataframe['pct_3'] > -1.2) &                      # 3 velas sin sangría
             (~dataframe['cooldown'].astype(bool)) &            # no venimos de velón rojo
             (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &  # no %B<0 con expansión
             (dataframe['minus_di'] <= dataframe['plus_di']) &  # DI- no domina
             (dataframe['volume'] > 0)
         )
 
-        # (A) Rebote tras tocar zona muy baja (casi mínimo local) + confirmación por mecha
         A = (
-            (dataframe['low'] <= dataframe['ll_10'] * 1.002) &                 # muy cerca del mínimo local
-            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.009) &        # pegado a banda baja (antes 1.005)
-            (dataframe['rsi_prev'] < 40) & (dataframe['rsi'] > dataframe['rsi_prev']) &  # antes 35
+            (dataframe['low'] <= dataframe['ll_10']) &
+            (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
-            (dataframe['high'] > dataframe['high'].shift(1)) &                 # permite ruptura por mecha
-            (dataframe['hl_ok'])
+            (dataframe['close'] >= dataframe['ema8'] * 0.998) &
+            (dataframe['hl_ok'])                               # confirmación de HL/HH
         )
 
-        # (B) Cruce de EMA8 al alza en zona baja (más margen)
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'] < dataframe['ema_slow']) &
-            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.015)          # antes 1.01
+            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
         )
 
-        # (C) StochRSI profundo + MACD acompañando (ligeramente más permisivo)
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 25) & (dataframe['stoch_d'] < 25) &
+            (dataframe['stoch_k'] < 20) & (dataframe['stoch_d'] < 20) &
             (dataframe['macd'] >= dataframe['macdsignal']) &
             (dataframe['minus_di'] <= dataframe['plus_di'])
         )
 
-        # (D) Ruptura tras compresión con volumen
         D = (
             (dataframe['bb_width'] < dataframe['bb_width'].rolling(100).quantile(0.25)) &
             (dataframe['close'] > dataframe['bb_middleband']) &
@@ -179,12 +173,6 @@ class CombinedBinHAndCluc(IStrategy):
             (
                 # (3) Sobrecompra y giro
                 (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < 77)
-            )
-            |
-            (
-                # (4) Pico claro: toca/roza máximos recientes con RSI alto
-                (dataframe['high'] >= dataframe['hh_20']) &
-                (dataframe['rsi'] > 75)
             ),
             'sell'
         ] = 1
