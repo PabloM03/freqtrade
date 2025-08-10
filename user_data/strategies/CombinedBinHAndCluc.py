@@ -20,9 +20,9 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    - Entradas: sólo tras barrido de mínimos (sweep) + vela de giro (hammer/engulf) + confirmación.
-    - Anti-cuchillos: cooldown tras velón rojo, %B con expansión, DI, % caídas recientes.
-    - Salidas: crash-guard + trailing Chandelier por ATR (más holgado). Sin sell-signal estático.
+    - Entradas solo en rebote/confirmación (no en mitad de caída).
+    - Salidas anticipadas ante desplomes (crash guard).
+    - Trailing dinámico tipo Chandelier por ATR.
     """
 
     minimal_roi = {"0": 0.0}
@@ -30,19 +30,16 @@ class CombinedBinHAndCluc(IStrategy):
     timeframe = '5m'
     startup_candle_count = 100
 
-    # Dejamos correr más: no usamos señales de venta del dataframe
-    use_sell_signal = False
+    use_sell_signal = True
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
+    trailing_stop = False  # usamos custom_stoploss
 
-    # Trailing sólo en custom_stoploss
-    trailing_stop = False
-
-    MIN_HOLD_BARS = 4  # se ignora si hay crash
+    MIN_HOLD_BARS = 4
 
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # BinHV45 (compat)
+        # BinHV45
         mid, lower = bollinger_bands(dataframe['close'], window_size=40, num_of_std=2)
         dataframe['lower'] = lower
         dataframe['bbdelta'] = (mid - dataframe['lower']).abs()
@@ -50,14 +47,14 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['tail'] = (dataframe['close'] - dataframe['low']).abs()
 
         # Bollinger (TP)
-        tp = qtpylib.typical_price(dataframe)
-        bb = qtpylib.bollinger_bands(tp, window=20, stds=2)
+        bb = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
         dataframe['bb_lowerband']  = bb['lower']
         dataframe['bb_middleband'] = bb['mid']
         dataframe['bb_upperband']  = bb['upper']
-        dataframe['bb_width'] = (dataframe['bb_upperband'] - dataframe['bb_lowerband']) / dataframe['bb_middleband'].replace(0, np.nan)
-        denom = (dataframe['bb_upperband'] - dataframe['bb_lowerband']).replace(0, np.nan)
-        dataframe['bb_percent'] = (dataframe['close'] - dataframe['bb_lowerband']) / denom
+        dataframe['bb_width'] = (dataframe['bb_upperband'] - dataframe['bb_lowerband']) / dataframe['bb_middleband']
+        dataframe['bb_percent'] = (dataframe['close'] - dataframe['bb_lowerband']) / (
+            (dataframe['bb_upperband'] - dataframe['bb_lowerband']).replace(0, np.nan)
+        )
         dataframe['bb_expanding'] = (dataframe['bb_width'] > dataframe['bb_width'].shift(1))
 
         # EMAs / fuerza
@@ -73,7 +70,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['plus_di']  = ta.PLUS_DI(dataframe, timeperiod=14)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
 
-        # Stoch RSI (por si lo quieres usar en tests futuros)
+        # Stoch RSI (K/D)
         stoch = ta.STOCHRSI(dataframe, timeperiod=14, fastk_period=3, fastd_period=3)
         dataframe['stoch_k'] = stoch['fastk']
         dataframe['stoch_d'] = stoch['fastd']
@@ -96,7 +93,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['pct_1'] = dataframe['close'].pct_change(1) * 100.0
         dataframe['pct_3'] = dataframe['close'].pct_change(3) * 100.0
 
-        # Estructura HL/HH simple y régimen EMAs
+        # Estructura HL/HH simple y regimen de EMAs
         dataframe['hl_ok'] = (dataframe['low'] > dataframe['low'].shift(1)) & (dataframe['close'] > dataframe['high'].shift(1))
         dataframe['trend_ok'] = (dataframe['ema8'] > dataframe['ema_fast']) & (dataframe['ema_fast'] > dataframe['ema_slow'])
 
@@ -107,58 +104,81 @@ class CombinedBinHAndCluc(IStrategy):
 
         return dataframe
 
-    # ---------------------- ENTRADAS (sweep + giro) ----------------------
+    # ---------------------- ENTRADAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        di_edge = dataframe['plus_di'] - dataframe['minus_di']
-
-        anti_knife = (
-            (dataframe['pct_1'] > -0.6) &                    # no caida fuerte inmediata
-            (dataframe['pct_3'] > -1.3) &                    # ni en 3 velas
-            (~dataframe['cooldown'].astype(bool)) &          # sin velón rojo reciente
+        anti_cuchillo = (
+            (dataframe['pct_1'] > -0.6) &                      # última vela no es caída fuerte
+            (dataframe['pct_3'] > -1.2) &                      # 3 velas sin sangría
+            (~dataframe['cooldown'].astype(bool)) &            # no venimos de velón rojo
             (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &  # no %B<0 con expansión
-            (di_edge >= 0) &
+            (dataframe['minus_di'] <= dataframe['plus_di']) &  # DI- no domina
             (dataframe['volume'] > 0)
         )
 
-        # Barrido de mínimos reciente + recuperación pegado a banda baja
-        sweep = (
-            (dataframe['low'] <= dataframe['low'].rolling(20).min()) &
-            (dataframe['close'] > dataframe['low'].shift(1)) &
-            (dataframe['bb_percent'] <= 0.10)
-        )
-
-        # Martillo (wick inferior grande) o envolvente alcista
-        lower_wick = (np.minimum(dataframe['open'], dataframe['close']) - dataframe['low']).abs()
-        body = (dataframe['close'] - dataframe['open']).abs()
-        hammer = (lower_wick > 1.5 * body) & (dataframe['close'] > dataframe['open'])
-
-        engulf = (
+        A = (
+            (dataframe['low'] <= dataframe['ll_10']) &
+            (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
-            (dataframe['open'].shift(1) > dataframe['close'].shift(1)) &
-            (dataframe['close'] >= dataframe['open'].shift(1)) &
-            (dataframe['open'] <= dataframe['close'].shift(1))
+            (dataframe['close'] >= dataframe['ema8'] * 0.998) &
+            (dataframe['hl_ok'])                               # confirmación de HL/HH
         )
 
-        # Confirmación mínima: romper el máximo de la vela previa
-        confirm_break = (dataframe['close'] > dataframe['high'].shift(1))
+        B = (
+            (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
+            (dataframe['close'] > dataframe['ema8']) &
+            (dataframe['close'] < dataframe['ema_slow']) &
+            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
+        )
 
-        # Contexto: muy cerca de EMA8 y aún por debajo de EMA50 (rebote "desde abajo")
-        near_ema8 = (dataframe['close'] >= dataframe['ema8'] * 0.995)
-        below_ema50 = (dataframe['close'] <= dataframe['ema_slow'] * 1.005)
+        C = (
+            (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
+            (dataframe['stoch_k'] > dataframe['stoch_d']) &
+            (dataframe['stoch_k'] < 20) & (dataframe['stoch_d'] < 20) &
+            (dataframe['macd'] >= dataframe['macdsignal']) &
+            (dataframe['minus_di'] <= dataframe['plus_di'])
+        )
 
-        # Rsi girando desde zona baja
-        rsi_turn = (dataframe['rsi_prev'] < 35) & (dataframe['rsi'] > dataframe['rsi_prev'])
-
-        buy_sig = sweep & (hammer | engulf) & confirm_break & near_ema8 & below_ema50 & rsi_turn
+        D = (
+            (dataframe['bb_width'] < dataframe['bb_width'].rolling(100).quantile(0.25)) &
+            (dataframe['close'] > dataframe['bb_middleband']) &
+            (dataframe['macdhist'] > 0) &
+            (dataframe['volume'] > dataframe['volume_mean_slow'])
+        )
 
         dataframe.loc[
-            buy_sig & anti_knife & dataframe['trend_ok'],
+            (A | B | C | D) & anti_cuchillo & dataframe['trend_ok'],
             'buy'
         ] = 1
 
         return dataframe
 
-    # ---------------------- SALIDAS DISCRECIONALES ----------------------
+    # ---------------------- SALIDAS CLÁSICAS ----------------------
+    def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[
+            (
+                # (1) Máximo local + vela de reversión
+                (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
+                (dataframe['close'] < dataframe['low'].shift(1)) &
+                (dataframe['rsi'] > 55)
+            )
+            |
+            (
+                # (2) Cruce por debajo de EMA8 tras HH
+                (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
+                (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
+                (dataframe['close'] < dataframe['ema8']) &
+                (dataframe['rsi'] > 50)
+            )
+            |
+            (
+                # (3) Sobrecompra y giro
+                (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < 77)
+            ),
+            'sell'
+        ] = 1
+        return dataframe
+
+    # ---------------------- UTILIDADES ----------------------
     def _bars_elapsed(self, trade: Trade, current_time: datetime) -> int:
         tf_minutes = int(self.timeframe.rstrip('m'))
         seconds = (current_time - trade.open_date_utc).total_seconds()
@@ -191,6 +211,7 @@ class CombinedBinHAndCluc(IStrategy):
         except Exception:
             return False
 
+    # ---------------------- EXITS DISCRECIONALES ----------------------
     def custom_exit(
         self,
         pair: str,
@@ -205,17 +226,21 @@ class CombinedBinHAndCluc(IStrategy):
             if current_profit is None or current_profit > -0.005:
                 return "crash_guard"
 
-        # Deja respirar el trade al menos 6 velas salvo crash
-        if self._bars_elapsed(trade, current_time) < max(6, self.MIN_HOLD_BARS):
+        if current_rate < trade.open_rate:
             return None
 
-        # Pequeño TP opcional para trades lentos
-        if current_profit is not None and 0.022 <= current_profit < 0.035:
-            return "tp_2_2_percent"
+        # Mínimo de barras salvo giro feo
+        if self._bars_elapsed(trade, current_time) < self.MIN_HOLD_BARS:
+            if not self._strong_bearish_reversal(pair):
+                return None
+
+        # Si no hay gran impulso, toma un 1.2%
+        if current_profit is not None and 0.012 <= current_profit < 0.03:
+            return "tp_1_2_percent"
 
         return None
 
-    # ---------------------- TRAILING DINÁMICO (Chandelier ATR) ----------------------
+    # ---------------------- TRAILING DINÁMICO (Chandelier + contexto) ----------------------
     def custom_stoploss(
         self,
         pair: str,
@@ -225,8 +250,8 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> float:
-        # Stop base si aún no hay beneficio suficiente
-        if current_profit is None or current_profit < 0.03:  # activa trailing a partir de 3%
+        # Stop base si no hay datos o profit bajo
+        if current_profit is None or current_profit < 0.02:
             return self.stoploss
 
         try:
@@ -236,23 +261,23 @@ class CombinedBinHAndCluc(IStrategy):
             adx = float(last['adx'])
             roc5 = float(last['roc5'])
         except Exception:
-            return stoploss_from_open(current_profit, 0.02)
+            return stoploss_from_open(current_profit, 0.015)
 
         strong_trend = (adx >= 25 and roc5 > 0)
         vertical_rally = (roc5 >= 3)
 
-        # Más aire: 2.6–3.2 ATR y límites 1.6%–3.8%
-        k = 3.2 if current_profit > 0.06 else 2.6
-        dist = (k * atr) / max(current_rate, 1e-9)
-        dist = min(0.038, max(0.016, dist))
+        # Chandelier distance (en % desde open)
+        k = 2.5 if current_profit > 0.05 else 2.0
+        chandelier_dist = max(0.012, min(0.03, (k * atr) / max(current_rate, 1e-9)))
 
+        # Afinado por contexto
         if vertical_rally:
-            dist = max(dist, 0.024)
+            chandelier_dist = max(chandelier_dist, 0.022)
         elif not strong_trend:
-            dist = min(dist, 0.022)
+            chandelier_dist = min(chandelier_dist, 0.018)
 
-        # Entre 3% y 6% de profit, no aprietes demasiado
+        # Si profit entre 3% y 6%, aprieta un poco más
         if 0.03 <= current_profit < 0.06:
-            return stoploss_from_open(current_profit, max(0.018, dist))
+            return stoploss_from_open(current_profit, max(0.015, chandelier_dist * 0.9))
 
-        return stoploss_from_open(current_profit, dist)
+        return stoploss_from_open(current_profit, chandelier_dist)
