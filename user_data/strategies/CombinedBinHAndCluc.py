@@ -104,55 +104,67 @@ class CombinedBinHAndCluc(IStrategy):
 
         return dataframe
 
-    # ---------------------- ENTRADAS ----------------------
+    # ---------------------- ENTRADAS (ajuste a mínimos locales) ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
-            (dataframe['pct_1'] > -0.6) &                      # última vela no es caída fuerte
-            (dataframe['pct_3'] > -1.2) &                      # 3 velas sin sangría
-            (~dataframe['cooldown'].astype(bool)) &            # no venimos de velón rojo
-            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &  # no %B<0 con expansión
-            (dataframe['minus_di'] <= dataframe['plus_di']) &  # DI- no domina
+            (dataframe['pct_1'] > -0.6) &
+            (dataframe['pct_3'] > -1.2) &
+            (~dataframe['cooldown'].astype(bool)) &
+            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &
+            (dataframe['minus_di'] <= dataframe['plus_di']) &
             (dataframe['volume'] > 0)
         )
 
+        # Permite giro de suelo aunque aún no haya alineación completa de EMAs
+        bottoming_ok = (dataframe['ema8'] > dataframe['ema8'].shift(1)) & (dataframe['ema_fast'] > dataframe['ema_fast'].shift(1))
+
+        # (A) Rebote tras mínimo local + confirmación, pegado a banda baja
         A = (
             (dataframe['low'] <= dataframe['ll_10']) &
+            (dataframe['bb_percent'] <= 0.10) &            # cerca de la banda baja
             (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
             (dataframe['close'] >= dataframe['ema8'] * 0.998) &
-            (dataframe['hl_ok'])                               # confirmación de HL/HH
+            (dataframe['close'] > dataframe['high'].shift(1)) &  # rompe el máximo previo
+            (dataframe['hl_ok'])
         )
 
+        # (B) Cruce EMA8 tras tocar zona baja (obligo a estar abajo)
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'] < dataframe['ema_slow']) &
-            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
+            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01) &
+            (dataframe['bb_percent'] <= 0.15)
         )
 
+        # (C) StochRSI profundo + MACD, pero también muy abajo
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
             (dataframe['stoch_k'] < 20) & (dataframe['stoch_d'] < 20) &
             (dataframe['macd'] >= dataframe['macdsignal']) &
-            (dataframe['minus_di'] <= dataframe['plus_di'])
+            (dataframe['minus_di'] <= dataframe['plus_di']) &
+            (dataframe['bb_percent'] <= 0.12)
         )
 
+        # (D) Compresión + ruptura, solo si el precio está bajo
         D = (
             (dataframe['bb_width'] < dataframe['bb_width'].rolling(100).quantile(0.25)) &
             (dataframe['close'] > dataframe['bb_middleband']) &
             (dataframe['macdhist'] > 0) &
-            (dataframe['volume'] > dataframe['volume_mean_slow'])
+            (dataframe['volume'] > dataframe['volume_mean_slow']) &
+            (dataframe['bb_percent'] <= 0.12)
         )
 
         dataframe.loc[
-            (A | B | C | D) & anti_cuchillo & dataframe['trend_ok'],
+            (A | B | C | D) & anti_cuchillo & (dataframe['trend_ok'] | bottoming_ok),
             'buy'
         ] = 1
 
         return dataframe
 
-    # ---------------------- SALIDAS CLÁSICAS ----------------------
+    # ---------------------- SALIDAS CLÁSICAS (añado venta en pico claro) ----------------------
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
@@ -173,6 +185,13 @@ class CombinedBinHAndCluc(IStrategy):
             (
                 # (3) Sobrecompra y giro
                 (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < 77)
+            )
+            |
+            (
+                # (4) Pico en banda superior + RSI alto + pérdida de momentum (NUEVO)
+                (dataframe['high'] >= dataframe['hh_20']) &
+                (dataframe['close'] >= dataframe['bb_upperband'] * 0.995) &
+                (dataframe['rsi_prev'] >= 70) & (dataframe['rsi'] <= dataframe['rsi_prev'])
             ),
             'sell'
         ] = 1
