@@ -87,6 +87,7 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['roc5'] = ta.ROC(dataframe, timeperiod=5)
         dataframe['ll_10'] = dataframe['low'].rolling(10).min()
         dataframe['hh_20'] = dataframe['high'].rolling(20).max()
+        dataframe['ll_20'] = dataframe['low'].rolling(20).min()  # >>> NEW: soporte más amplio
 
         # ATR y variaciones (para anti-cuchillo y crash guard)
         dataframe['atr'] = ta.ATR(dataframe, timeperiod=14)
@@ -100,18 +101,19 @@ class CombinedBinHAndCluc(IStrategy):
         # Velón rojo y cooldown (evitar cuchillos)
         body = (dataframe['close'] - dataframe['open']).abs()
         dataframe['big_red'] = (dataframe['close'] < dataframe['open']) & (body > 1.2 * dataframe['atr'])
-        dataframe['cooldown'] = dataframe['big_red'].rolling(6).max()  # ~30 min en 5m
+        dataframe['cooldown'] = dataframe['big_red'].rolling(5).max()  # >>> CHANGED: 6 -> 5 para permitir algo más de entrada
 
         return dataframe
 
     # ---------------------- ENTRADAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # >>> CHANGED: anti-cuchillo un poco más permisivo, pero manteniendo filtros clave
         anti_cuchillo = (
-            (dataframe['pct_1'] > -0.6) &                      # última vela no es caída fuerte
-            (dataframe['pct_3'] > -1.2) &                      # 3 velas sin sangría
-            (~dataframe['cooldown'].astype(bool)) &            # no venimos de velón rojo
-            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &  # no %B<0 con expansión
-            (dataframe['minus_di'] <= dataframe['plus_di']) &  # DI- no domina
+            (dataframe['pct_1'] > -0.8) &                      # antes -0.6
+            (dataframe['pct_3'] > -1.6) &                      # antes -1.2
+            (~dataframe['cooldown'].astype(bool)) &
+            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &
+            (dataframe['minus_di'] <= dataframe['plus_di']) &
             (dataframe['volume'] > 0)
         )
 
@@ -120,14 +122,15 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
             (dataframe['close'] >= dataframe['ema8'] * 0.998) &
-            (dataframe['hl_ok'])                               # confirmación de HL/HH
+            (dataframe['hl_ok'])
         )
 
+        # >>> CHANGED: permitir toque algo más claro en la banda baja
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'] < dataframe['ema_slow']) &
-            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
+            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.02)   # antes 1.01
         )
 
         C = (
@@ -145,8 +148,23 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > dataframe['volume_mean_slow'])
         )
 
+        # >>> NEW: Regla E enfocada a mínimos locales con mecha larga y %B muy bajo (rebote en suelo)
+        E = (
+            (dataframe['low'] <= dataframe['ll_20'] * 1.002) &          # muy cerca de mínimos recientes
+            (dataframe['bb_percent'] <= 0.08) &                         # pegado a la banda baja
+            (dataframe['rsi_prev'] < 38) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['tail'] >= dataframe['atr'] * 0.8) &             # mecha inferior significativa
+            (dataframe['close'] > dataframe['open'])                    # confirmación de rebote
+        )
+
+        # >>> NEW: “trend_ok” relajado SOLO cuando hay patrón de suelo muy claro
+        trend_ok_relajado = (
+            (dataframe['ema_fast'] > dataframe['ema_slow']) &
+            (dataframe['close'] > dataframe['ema_fast'] * 0.995)
+        )
+
         dataframe.loc[
-            (A | B | C | D) & anti_cuchillo & dataframe['trend_ok'],
+            ((A | B | C | D | E) & anti_cuchillo & (dataframe['trend_ok'] | (E & trend_ok_relajado))),
             'buy'
         ] = 1
 
