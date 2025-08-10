@@ -106,63 +106,47 @@ class CombinedBinHAndCluc(IStrategy):
 
     # ---------------------- ENTRADAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Filtro anti-cuchillo que ya tenías
         anti_cuchillo = (
-            (dataframe['pct_1'] > -0.6) &
-            (dataframe['pct_3'] > -1.2) &
-            (~dataframe['cooldown'].astype(bool)) &
-            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &
-            (dataframe['minus_di'] <= dataframe['plus_di']) &
+            (dataframe['pct_1'] > -0.6) &                      # última vela no es caída fuerte
+            (dataframe['pct_3'] > -1.2) &                      # 3 velas sin sangría
+            (~dataframe['cooldown'].astype(bool)) &            # no venimos de velón rojo
+            (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &  # no %B<0 con expansión
+            (dataframe['minus_di'] <= dataframe['plus_di']) &  # DI- no domina
             (dataframe['volume'] > 0)
         )
 
-        # Giro local aunque las EMAs no estén alineadas todavía (sólo pendiente positiva)
-        bottoming_ok = (dataframe['ema8'] > dataframe['ema8'].shift(1)) & (dataframe['ema_fast'] > dataframe['ema_fast'].shift(1))
+        A = (
+            (dataframe['low'] <= dataframe['ll_10']) &
+            (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['close'] > dataframe['open']) &
+            (dataframe['close'] >= dataframe['ema8'] * 0.998) &
+            (dataframe['hl_ok'])                               # confirmación de HL/HH
+        )
 
-        # Muy pegado a banda baja
-        deep_bb = (dataframe['bb_percent'] <= 0.06)
-
-        # (A) Nuevo mínimo reciente + rechazo (wick grande) + confirmación rompiendo el high previo
-        sweep_low = (dataframe['low'] <= dataframe['low'].rolling(20).min())
-        body = (dataframe['close'] - dataframe['open']).abs()
-        lower_wick = (np.minimum(dataframe['open'], dataframe['close']) - dataframe['low']).abs()
-        hammer_like = (lower_wick > 1.5 * body) & (dataframe['close'] >= dataframe['open'])
-        confirm_break = (dataframe['close'] > dataframe['high'].shift(1))
-        near_ema8 = (dataframe['close'] <= dataframe['ema8'] * 1.002)  # no alejarse del giro
-
-        A = sweep_low & hammer_like & confirm_break & deep_bb & near_ema8
-
-        # (B) Rebote de EMA8 tras tocar banda baja (obligo a deep_bb para que sea abajo)
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'] < dataframe['ema_slow']) &
-            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01) &
-            deep_bb
+            (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
         )
 
-        # (C) StochRSI profundo + MACD >= signal (también exijo deep_bb para que no compre en medio)
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
             (dataframe['stoch_k'] < 20) & (dataframe['stoch_d'] < 20) &
             (dataframe['macd'] >= dataframe['macdsignal']) &
-            (dataframe['minus_di'] <= dataframe['plus_di']) &
-            deep_bb
+            (dataframe['minus_di'] <= dataframe['plus_di'])
         )
 
-        # (D) Compresión + ruptura (sólo si está pegado a banda baja)
         D = (
             (dataframe['bb_width'] < dataframe['bb_width'].rolling(100).quantile(0.25)) &
             (dataframe['close'] > dataframe['bb_middleband']) &
             (dataframe['macdhist'] > 0) &
-            (dataframe['volume'] > dataframe['volume_mean_slow']) &
-            deep_bb
+            (dataframe['volume'] > dataframe['volume_mean_slow'])
         )
 
-        # Permite entrada si hay tendencia alineada o si estamos en giro de suelo (bottoming_ok)
         dataframe.loc[
-            (A | B | C | D) & anti_cuchillo & (dataframe['trend_ok'] | bottoming_ok),
+            (A | B | C | D) & anti_cuchillo & dataframe['trend_ok'],
             'buy'
         ] = 1
 
