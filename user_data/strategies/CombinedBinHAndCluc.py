@@ -115,17 +115,17 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > 0)
         )
 
-        # Permite giro de suelo aunque aún no haya alineación completa de EMAs
+        # Permite giro de suelo aunque aún no haya alineación completa de EMAs (solo pendiente positiva)
         bottoming_ok = (dataframe['ema8'] > dataframe['ema8'].shift(1)) & (dataframe['ema_fast'] > dataframe['ema_fast'].shift(1))
 
         # (A) Rebote tras mínimo local + confirmación, pegado a banda baja
         A = (
             (dataframe['low'] <= dataframe['ll_10']) &
-            (dataframe['bb_percent'] <= 0.10) &            # cerca de la banda baja
+            (dataframe['bb_percent'] <= 0.12) &            # cerca de la banda baja
             (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
             (dataframe['close'] >= dataframe['ema8'] * 0.998) &
-            (dataframe['close'] > dataframe['high'].shift(1)) &  # rompe el máximo previo
+            (dataframe['close'] > dataframe['high'].shift(1)) &  # rompe el máximo previo (confirmación)
             (dataframe['hl_ok'])
         )
 
@@ -164,7 +164,7 @@ class CombinedBinHAndCluc(IStrategy):
 
         return dataframe
 
-    # ---------------------- SALIDAS CLÁSICAS (añado venta en pico claro) ----------------------
+    # ---------------------- SALIDAS CLÁSICAS (venta en picos clara añadida) ----------------------
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
@@ -175,23 +175,23 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # (2) Cruce por debajo de EMA8 tras HH
+                # (2) Cruce por debajo de EMA8 tras HH con pérdida de momentum
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
                 (dataframe['close'] < dataframe['ema8']) &
-                (dataframe['rsi'] > 50)
+                (dataframe['rsi'] > 50) &
+                (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
             )
             |
             (
                 # (3) Sobrecompra y giro
-                (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < 77)
+                (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < dataframe['rsi_prev'])
             )
             |
             (
-                # (4) Pico en banda superior + RSI alto + pérdida de momentum (NUEVO)
-                (dataframe['high'] >= dataframe['hh_20']) &
-                (dataframe['close'] >= dataframe['bb_upperband'] * 0.995) &
-                (dataframe['rsi_prev'] >= 70) & (dataframe['rsi'] <= dataframe['rsi_prev'])
+                # (4) Pico en banda superior + RSI alto que se gira (venta en techo)
+                (dataframe['close'] >= dataframe['bb_upperband'] * 0.998) &
+                (dataframe['rsi_prev'] >= 68) & (dataframe['rsi'] < dataframe['rsi_prev'])
             ),
             'sell'
         ] = 1
