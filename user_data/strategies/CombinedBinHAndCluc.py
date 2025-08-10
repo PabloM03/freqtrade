@@ -115,14 +115,18 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > 0)
         )
 
+        # (A) Rebote tras tocar zona baja: suelo local real + confirmación
         A = (
             (dataframe['low'] <= dataframe['ll_10']) &
+            (dataframe['bb_percent'] <= 0.12) &                 # pegado a banda baja  (NUEVO)
             (dataframe['rsi_prev'] < 32) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] > dataframe['open']) &
             (dataframe['close'] >= dataframe['ema8'] * 0.998) &
-            (dataframe['hl_ok'])                               # confirmación de HL/HH
+            (dataframe['close'] > dataframe['high'].shift(1)) & # rompe el high previo (NUEVO)
+            (dataframe['hl_ok'])                                # confirmación de HL/HH
         )
 
+        # (B) Cruce de EMA8 al alza justo después de banda baja -> rebote confirmado
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
@@ -130,6 +134,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] <= dataframe['bb_lowerband'] * 1.01)
         )
 
+        # (C) StochRSI cruce alcista profundo + MACD acompañando + DI no bajista
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
@@ -138,6 +143,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['minus_di'] <= dataframe['plus_di'])
         )
 
+        # (D) Ruptura tras compresión (entra un pelín antes, NO persigue)
         D = (
             (dataframe['bb_width'] < dataframe['bb_width'].rolling(100).quantile(0.25)) &
             (dataframe['close'] > dataframe['bb_middleband']) &
@@ -156,22 +162,23 @@ class CombinedBinHAndCluc(IStrategy):
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (
-                # (1) Máximo local + vela de reversión
+                # (1) Máximo local + vela de reversión (más exigente para no saltar tan fácil)
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'] < dataframe['low'].shift(1)) &
-                (dataframe['rsi'] > 55)
+                (dataframe['rsi'] > 62)                             # antes 55
             )
             |
             (
-                # (2) Cruce por debajo de EMA8 tras HH
+                # (2) Cruce por debajo de EMA8 tras HH + pérdida real de momentum
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
                 (dataframe['close'] < dataframe['ema8']) &
-                (dataframe['rsi'] > 50)
+                (dataframe['rsi'] > 58) &                           # antes 50
+                (dataframe['macdhist'] < 0)                         # nuevo filtro
             )
             |
             (
-                # (3) Sobrecompra y giro
+                # (3) Sobrecompra y giro (igual)
                 (dataframe['rsi_prev'] >= 80) & (dataframe['rsi'] < 77)
             ),
             'sell'
@@ -234,9 +241,9 @@ class CombinedBinHAndCluc(IStrategy):
             if not self._strong_bearish_reversal(pair):
                 return None
 
-        # Si no hay gran impulso, toma un 1.2%
-        if current_profit is not None and 0.012 <= current_profit < 0.03:
-            return "tp_1_2_percent"
+        # Antes cerraba al 1.2%. Sube el listón para no vender tan rápido:
+        if current_profit is not None and 0.022 <= current_profit < 0.04:
+            return "tp_2_2_to_4_percent"
 
         return None
 
@@ -250,8 +257,8 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> float:
-        # Stop base si no hay datos o profit bajo
-        if current_profit is None or current_profit < 0.02:
+        # Activa trailing un poco más tarde para no sacar pronto
+        if current_profit is None or current_profit < 0.03:   # antes 0.02
             return self.stoploss
 
         try:
@@ -261,23 +268,21 @@ class CombinedBinHAndCluc(IStrategy):
             adx = float(last['adx'])
             roc5 = float(last['roc5'])
         except Exception:
-            return stoploss_from_open(current_profit, 0.015)
+            return stoploss_from_open(current_profit, 0.018)
 
         strong_trend = (adx >= 25 and roc5 > 0)
         vertical_rally = (roc5 >= 3)
 
-        # Chandelier distance (en % desde open)
+        # Chandelier distance (en % desde open) con un mínimo mayor para dar aire
         k = 2.5 if current_profit > 0.05 else 2.0
-        chandelier_dist = max(0.012, min(0.03, (k * atr) / max(current_rate, 1e-9)))
+        chandelier_dist = max(0.016, min(0.03, (k * atr) / max(current_rate, 1e-9)))  # min antes 0.012
 
-        # Afinado por contexto
         if vertical_rally:
             chandelier_dist = max(chandelier_dist, 0.022)
         elif not strong_trend:
             chandelier_dist = min(chandelier_dist, 0.018)
 
-        # Si profit entre 3% y 6%, aprieta un poco más
         if 0.03 <= current_profit < 0.06:
-            return stoploss_from_open(current_profit, max(0.015, chandelier_dist * 0.9))
+            return stoploss_from_open(current_profit, max(0.018, chandelier_dist * 0.9))
 
         return stoploss_from_open(current_profit, chandelier_dist)
