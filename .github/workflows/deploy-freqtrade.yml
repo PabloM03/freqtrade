@@ -41,7 +41,8 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
-          RSYNC_EXCLUDES="--exclude .git/ 
+          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
+                          --exclude config.json \
                           --exclude logs/ \
                           --exclude **/__pycache__/"
           rsync -az $RSYNC_EXCLUDES \
