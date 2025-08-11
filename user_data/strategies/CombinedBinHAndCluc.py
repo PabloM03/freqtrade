@@ -15,19 +15,33 @@ class SimplePeakRebound(IStrategy):
         df['bb_lower'], df['bb_mid'], df['bb_upper'] = bb
         df['pct_1'] = df['close'].pct_change(1) * 100
         df['pct_3'] = df['close'].pct_change(3) * 100
+        df['atr'] = ta.ATR(df, timeperiod=14)
         return df
 
     def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
-        anti_cuchillo = (df['pct_1'] > -1.0) & (df['pct_3'] > -2.0)
+        # Anti-cuchillo estricto
+        anti_cuchillo = (df['pct_1'] > -0.9) & (df['pct_3'] > -1.8)
+
+        # Excepción: capitulación con rebote claro
+        cap_rebote = (
+            ((df['pct_1'] <= -1.8) | (df['pct_3'] <= -3.5)) &
+            (df['close'] > df['open']) &
+            (df['rsi'] > df['rsi'].shift(1)) &
+            ((df['open'] - df['low']) > df['atr'] * 0.8)
+        )
+
+        # Zona óptima para comprar
+        zona_profunda = (df['close'] <= df['bb_lower'] * 1.004)
         rebote_fuerte = (df['close'] > df['open']) & (df['rsi'] > df['rsi'].shift(1))
-        zona_profunda = (df['close'] <= df['bb_lower'] * 1.005)
-        df.loc[anti_cuchillo & rebote_fuerte & zona_profunda, 'buy'] = 1
+
+        df.loc[(zona_profunda & rebote_fuerte & anti_cuchillo) | cap_rebote, 'buy'] = 1
         return df
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
+        # Pico óptimo con confirmación de giro
         pico_optimo = (
-            (df['close'] >= df['bb_upper'] * 0.999) &
-            (df['rsi'] >= 70) &
+            (df['close'] >= df['bb_upper'] * 0.998) &
+            (df['rsi'] >= 69) &
             (df['close'] < df['close'].shift(1))
         )
         df.loc[pico_optimo, 'sell'] = 1
