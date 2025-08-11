@@ -1,0 +1,59 @@
+name: Deploy Freqtrade
+
+on:
+  push:
+    branches: [ "develop" ]
+    paths-ignore:
+      - "README.md"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Instalar rsync y ssh
+        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
+
+      - name: Preparar claves SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Sincronizar código al servidor con rsync (sin borrar config.json)
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          TARGET_DIR: ${{ secrets.TARGET_DIR }}
+        run: |
+          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
+                          --exclude logs/ \
+                          --exclude **/__pycache__/"
+          rsync -az $RSYNC_EXCLUDES \
+            -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
+            ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
+
+      - name: Reiniciar servicio
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
