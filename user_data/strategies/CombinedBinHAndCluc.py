@@ -20,7 +20,7 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    - Compras: bajadas óptimas (mínimo local + confirmación), evita cuchillos salvo capitulación segura.
+    - Compras: bajadas óptimas (mínimo local + confirmación), evita cuchillos salvo capitulación con rebote confirmado.
     - Ventas: picos óptimos (máximo local + rechazo/giro). **Sin cambios** respecto a la versión anterior.
     - Crash-guard y trailing moderado.
     """
@@ -132,16 +132,29 @@ class CombinedBinHAndCluc(IStrategy):
 
         return dataframe
 
-    # ---------------------- COMPRAS (menos, más óptimas y anti-cuchillos con “confirmación”) ----------------------
+    # ---------------------- COMPRAS (anti-cuchillo + confirmación de rebote) ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Anti-cuchillo un poco más estricto (override con capitulación segura)
+        # Anti-cuchillo base (ligeramente más estricto)
         anti_cuchillo = (
-            (dataframe['pct_1'] > -1.0) &    # antes -1.2
-            (dataframe['pct_3'] > -2.2) &    # antes -2.4
+            (dataframe['pct_1'] > -1.0) &
+            (dataframe['pct_3'] > -2.2) &
             (~dataframe['cooldown'].astype(bool)) &
             (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &
             (dataframe['minus_di'] <= dataframe['plus_di']) &
             (dataframe['volume'] > 0)
+        )
+
+        # Contexto de cuchillo (entorno peligroso)
+        knife_env = (
+            (dataframe['pct_1'] <= -1.4) |
+            ((dataframe['pct_3'] <= -3.0) & dataframe['bb_expanding'] & (dataframe['bb_percent'] <= 0.08))
+        )
+
+        # Confirmación de rebote real (para permitir operar en knife_env)
+        confirm_rebound = (
+            (dataframe['close'] > dataframe['close'].shift(1)) &
+            (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1))
         )
 
         # Evitar compras “arriba”
@@ -151,26 +164,25 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['rsi'] > 57)
         )
 
-        # Zonas de valor (más selectivas)
-        deep_bb    = (dataframe['bb_percent'] <= 0.18)   # antes 0.20
-        bb_zone_ok = (dataframe['bb_percent'] <= 0.32)   # antes 0.35
+        # Zonas de valor (más selectivas para reducir compras)
+        deep_bb    = (dataframe['bb_percent'] <= 0.17)   # antes 0.18
+        bb_zone_ok = (dataframe['bb_percent'] <= 0.30)   # antes 0.32
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
-        hammerish  = lower_wick > 1.2 * body            # antes 1.15
+        hammerish  = lower_wick > 1.2 * body
 
-        # --- Señal de CAPITULACIÓN SEGURA (permite saltarse anti_cuchillo) ---
-        # Gran caída + mecha larga + volumen + cierre verde y > cierre previo + muy cerca de banda inferior.
+        # --- Señales seguras de capitulación / re-entrada (pueden operar en knife_env, pero con confirmación adicional) ---
         D_SAFE = (
             ((dataframe['pct_1'] <= -1.9) | (dataframe['pct_3'] <= -3.6)) &
-            (dataframe['bb_percent'] <= 0.03) &
+            (dataframe['bb_percent'] <= 0.04) &                         # un poco más cerca de banda inferior
             (dataframe['tail'] >= dataframe['atr'] * 1.1) &
             (dataframe['vol_spike']) &
             (dataframe['close'] >= dataframe['open']) &
-            (dataframe['close'] > dataframe['close'].shift(1))
+            (dataframe['close'] > dataframe['close'].shift(1)) &
+            (dataframe['rsi'] > dataframe['rsi_prev'])
         )
 
-        # Re-entrada segura tras cerrar fuera de banda inferior y recuperar dentro con mejora de momento
         B_SAFE = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
@@ -179,25 +191,26 @@ class CombinedBinHAndCluc(IStrategy):
             (bb_zone_ok)
         )
 
-        # A) Mínimo local + giro RSI + martillo **y** volumen (más filtro)
+        # --- Señales troncales (más exigentes para reducir compras planas) ---
+        # A) Mínimo local + giro RSI + martillo **y** volumen
         A = (
             (dataframe['loc_trough']) &
             ((dataframe['low'] <= dataframe['ll_10'] * 1.003) | deep_bb) &
-            (dataframe['rsi_prev'] < 43) & (dataframe['rsi'] > dataframe['rsi_prev']) &  # antes 45
+            (dataframe['rsi_prev'] < 42) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
-            (hammerish & dataframe['vol_spike'])  # antes OR, ahora AND
+            (hammerish & dataframe['vol_spike'])
         )
 
         # C) StochRSI cruce en sobreventa + MACD no empeora + zona baja
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 33) & (dataframe['stoch_d'] < 33) &  # antes 35
+            (dataframe['stoch_k'] < 32) & (dataframe['stoch_d'] < 32) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
             (bb_zone_ok)
         )
 
-        # E) Pullback controlado a EMA8 ascendente en zona media-baja
+        # E) Pullback a EMA8 ascendente en zona media-baja
         E = (
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'].shift(1) <= dataframe['ema8'].shift(1)) &
@@ -207,7 +220,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['vol_spike'] | hammerish)
         )
 
-        # F) Doble toque / higher-low sutil en zona baja (un poco más exigente)
+        # F) Doble toque / higher-low sutil en zona baja
         F = (
             (dataframe['bb_percent'] <= 0.28) &
             (dataframe['low'] <= dataframe['ll_10'] * 1.004) &
@@ -216,10 +229,13 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # Ensamblado: menos compras por defecto, pero permitimos D_SAFE y B_SAFE aunque haya cuchillo
         core_buys = (A | C | E | F)
+
+        # KnifeGuard: si el entorno es de cuchillo, solo permitimos si hay confirmación + (martillo o volumen)
+        knife_guard_ok = (~knife_env) | (knife_env & confirm_rebound & (hammerish | dataframe['vol_spike']))
+
         dataframe.loc[
-            (((core_buys & anti_cuchillo & ~no_buy_high) | D_SAFE | B_SAFE)),
+            ((((core_buys & anti_cuchillo & ~no_buy_high & knife_guard_ok)) | D_SAFE | B_SAFE)),
             'buy'
         ] = 1
         return dataframe
