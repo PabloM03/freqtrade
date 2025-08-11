@@ -20,8 +20,8 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    - Compras: rebote en mínimos locales + capitulación (más presentes, pero solo abajo).
-    - Ventas: picos claros (un pelín más conservadoras).
+    - Compras: rebote en mínimos locales + capitulación (ligeramente menos frecuentes).
+    - Ventas: picos claros (un poco más conservadoras).
     - Crash-guard y trailing moderado.
     """
 
@@ -31,33 +31,30 @@ class CombinedBinHAndCluc(IStrategy):
     MIN_PROFIT_NET = 2 * FEE_RATE + SLIPPAGE_BUFFER  # ~0.25% neto para permitir venta
 
     # Beneficios mínimos desde la compra para vender (además de MIN_PROFIT_NET)
-    PEAK_MIN_PROFIT = 0.0065   # 0.65% si el pico es claro
-    HH_EMA_MIN_PROFIT = 0.008  # 0.8% para HH + ruptura EMA8 + momentum cayendo
-    HARD_TP = 0.018            # 1.8%: TP de seguridad si no hay señal pero hay gran tramo
+    PEAK_MIN_PROFIT = 0.0065
+    HH_EMA_MIN_PROFIT = 0.008
+    HARD_TP = 0.018
 
     minimal_roi = {"0": 0.0}
     stoploss = -0.05
     timeframe = '5m'
     startup_candle_count = 100
 
-    # Señales de venta + exits discrecionales (selectivas)
     use_sell_signal = True
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
     trailing_stop = False
 
-    MIN_HOLD_BARS = 1  # permite salir un poco antes
+    MIN_HOLD_BARS = 1
 
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # BinHV45
         mid, lower = bollinger_bands(dataframe['close'], window_size=40, num_of_std=2)
         dataframe['lower'] = lower
         dataframe['bbdelta'] = (mid - dataframe['lower']).abs()
         dataframe['closedelta'] = (dataframe['close'] - dataframe['close'].shift()).abs()
         dataframe['tail'] = (dataframe['close'] - dataframe['low']).abs()
 
-        # Bollinger
         tp = qtpylib.typical_price(dataframe)
         bb = qtpylib.bollinger_bands(tp, window=20, stds=2)
         dataframe['bb_lowerband']  = bb['lower']
@@ -68,46 +65,39 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['bb_percent'] = (dataframe['close'] - dataframe['bb_lowerband']) / denom
         dataframe['bb_expanding'] = (dataframe['bb_width'] > dataframe['bb_width'].shift(1))
 
-        # EMAs / fuerza
         dataframe['ema8']     = ta.EMA(dataframe, timeperiod=8)
         dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
         dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
         dataframe['ema8_slope_up'] = dataframe['ema8'] > dataframe['ema8'].shift(1)
 
-        # RSI / ADX / DI
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
         dataframe['rsi_prev'] = dataframe['rsi'].shift(1)
         dataframe['adx'] = ta.ADX(dataframe, timeperiod=14)
         dataframe['plus_di']  = ta.PLUS_DI(dataframe, timeperiod=14)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
 
-        # StochRSI
         stoch = ta.STOCHRSI(dataframe, timeperiod=14, fastk_period=3, fastd_period=3)
         dataframe['stoch_k'] = stoch['fastk']
         dataframe['stoch_d'] = stoch['fastd']
         dataframe['stoch_k_prev'] = dataframe['stoch_k'].shift(1)
         dataframe['stoch_d_prev'] = dataframe['stoch_d'].shift(1)
 
-        # MACD
         macd = ta.MACD(dataframe, fastperiod=12, slowperiod=26, signalperiod=9)
         dataframe['macd'] = macd['macd']
         dataframe['macdsignal'] = macd['macdsignal']
         dataframe['macdhist'] = macd['macdhist']
 
-        # Momentum/extremos
         dataframe['roc5'] = ta.ROC(dataframe, timeperiod=5)
         dataframe['ll_10'] = dataframe['low'].rolling(10).min()
         dataframe['hh_20'] = dataframe['high'].rolling(20).max()
         dataframe['ll_20'] = dataframe['low'].rolling(20).min()
         dataframe['ll_8']  = dataframe['low'].rolling(8).min()
 
-        # ATR y variaciones
         dataframe['atr'] = ta.ATR(dataframe, timeperiod=14)
         dataframe['pct_1'] = dataframe['close'].pct_change(1) * 100.0
         dataframe['pct_3'] = dataframe['close'].pct_change(3) * 100.0
 
-        # Estructura HL/HH y cooldown
         dataframe['hl_ok'] = (dataframe['low'] > dataframe['low'].shift(1)) & (dataframe['close'] > dataframe['high'].shift(1))
         dataframe['trend_ok'] = (dataframe['ema8'] > dataframe['ema_fast']) & (dataframe['ema_fast'] > dataframe['ema_slow'])
 
@@ -115,12 +105,8 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe['big_red'] = (dataframe['close'] < dataframe['open']) & (body > 1.2 * dataframe['atr'])
         dataframe['cooldown'] = dataframe['big_red'].rolling(5).max()
 
-        # Mecha superior (rechazos)
         dataframe['upper_wick'] = (dataframe['high'] - np.maximum(dataframe['open'], dataframe['close'])).abs()
-
-        # Volumen relativo
         dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * 1.15)
-
         return dataframe
 
     # ---------------------- COMPRAS ----------------------
@@ -134,47 +120,46 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > 0)
         )
 
-        # --- Filtro global: evita compras "arriba" (un poco más permisivo) ---
-        # Antes eran OR; ahora pedimos las 3 a la vez para bloquear (deja pasar más entradas válidas).
+        # Bloqueo de compras "arriba" (ligeramente más estricto para reducir un poco las entradas)
         no_buy_high = (
             (dataframe['close'] > dataframe['bb_middleband'] * 1.02) &
             (dataframe['close'] > dataframe['ema_fast']) &
-            (dataframe['rsi'] > 58)
+            (dataframe['rsi'] > 57)          # antes 58
         )
 
-        # Zona baja BB algo más amplia
-        deep_bb = (dataframe['bb_percent'] <= 0.22)   # antes 0.18
-        bb_zone_low = (dataframe['bb_percent'] <= 0.40)  # antes 0.35
+        # Zonas bajas un pelín más exigentes (reduce algo las compras)
+        deep_bb = (dataframe['bb_percent'] <= 0.21)   # antes 0.22
+        bb_zone_low = (dataframe['bb_percent'] <= 0.38)  # antes 0.40
 
         lower_wick = (np.minimum(dataframe['open'], dataframe['close']) - dataframe['low']).abs()
         body = (dataframe['close'] - dataframe['open']).abs()
         hammerish = lower_wick > 1.1 * body
 
-        # A) Mínimos con martillo / giro RSI
+        # A) Mínimos con martillo / giro RSI (ligeramente más exigente)
         A = (
             (
                 (dataframe['low'] <= dataframe['ll_20'] * 1.007) |
                 (dataframe['low'] <= dataframe['ll_10'] * 1.004) |
                 deep_bb
             ) &
-            (dataframe['rsi_prev'] < 48) & (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open'] * 0.998) &
+            (dataframe['rsi_prev'] < 47) & (dataframe['rsi'] > dataframe['rsi_prev']) &  # antes 48
+            (dataframe['close'] >= dataframe['open']) &
             (dataframe['close'] >= dataframe['ema8'] * 0.992)
         )
 
-        # B) Cruce al alza de EMA8 desde abajo en zona baja de BB
+        # B) Cruce EMA8 desde abajo en zona baja
         B = (
             (dataframe['close'].shift(1) < dataframe['ema8'].shift(1)) &
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'] < dataframe['ema_slow']) &
-            (dataframe['bb_percent'] <= 0.45)
+            (dataframe['bb_percent'] <= 0.43)  # antes 0.45
         )
 
         # C) StochRSI cruce en sobreventa
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 38) & (dataframe['stoch_d'] < 38) &   # antes 34
+            (dataframe['stoch_k'] < 36) & (dataframe['stoch_d'] < 36) &   # antes 38
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
             bb_zone_low
         )
@@ -186,15 +171,15 @@ class CombinedBinHAndCluc(IStrategy):
             deep_bb
         )
 
-        # E_MIN) Mínimo local claro (8 velas)
+        # E_MIN) Mínimo local claro (un pelín más exigente)
         E_MIN = (
             (dataframe['low'] <= dataframe['ll_8'] * 1.003) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open'] * 0.998) &
-            (dataframe['bb_percent'] <= 0.25)
+            (dataframe['close'] >= dataframe['open']) &
+            (dataframe['bb_percent'] <= 0.23)  # antes 0.25
         )
 
-        # E_CAP) Capitulación extrema (siempre permitida)
+        # E_CAP) Capitulación extrema
         E_CAP = (
             ((dataframe['pct_1'] <= -1.8) | (dataframe['pct_3'] <= -3.5)) &
             (dataframe['bb_percent'] <= 0) &
@@ -202,7 +187,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # F) Reentrada tras salir de la banda inferior (re-entrance clásico)
+        # F) Reentrada tras salir de la banda inferior
         F = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
@@ -215,30 +200,28 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'].shift(1) <= dataframe['ema8'].shift(1)) &
             (dataframe['ema8_slope_up']) &
-            (dataframe['rsi'] >= 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['rsi'] >= 46) & (dataframe['rsi'] > dataframe['rsi_prev']) &  # +1
             ((dataframe['low'] <= dataframe['ll_10'] * 1.01) | bb_zone_low | (dataframe['close'] <= dataframe['bb_middleband'] * 1.01)) &
             (dataframe['vol_spike'] | hammerish)
         )
 
-        # H) Doble toque / higher-low en zona baja (más entradas "claras" sin comprar alto)
+        # H) Doble toque / higher-low en zona baja (ligeramente más estricto)
         H = (
-            (dataframe['bb_percent'] <= 0.32) &
-            (dataframe['low'] <= dataframe['ll_10'] * 1.006) &
-            (dataframe['low'] >= dataframe['ll_10'].shift(1) * 0.992) &  # HL sutil
+            (dataframe['bb_percent'] <= 0.30) &               # antes 0.32
+            (dataframe['low'] <= dataframe['ll_10'] * 1.005) & # antes 1.006
+            (dataframe['low'] >= dataframe['ll_10'].shift(1) * 0.992) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open'] * 0.998)
+            (dataframe['close'] >= dataframe['open'])
         )
 
-        # Aplicar filtro: no comprar alto (excepto capitulación E_CAP)
         dataframe.loc[
             (((A | B | C | D | E_MIN | F | G | H) & anti_cuchillo & ~no_buy_high) | E_CAP),
             'buy'
         ] = 1
         return dataframe
 
-    # ---------------------- VENTAS: picos locales (ligeramente más conservadoras) ----------------------
+    # ---------------------- VENTAS: un poco más conservadoras ----------------------
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Rechazo con mecha superior (se mantiene)
         reject_upper = (
             (dataframe['upper_wick'] >= dataframe['atr'] * 0.9) &
             (dataframe['upper_wick'] > (dataframe['close'] - dataframe['open']).abs() * 1.2) &
@@ -249,31 +232,29 @@ class CombinedBinHAndCluc(IStrategy):
         dataframe.loc[
             (
                 (dataframe['high'] >= dataframe['hh_20'] * 0.999) &
-                (dataframe['close'] >= dataframe['bb_upperband'] * 0.997) &  # antes 0.996
-                (dataframe['rsi'] >= 69) &                                   # antes 68
+                (dataframe['close'] >= dataframe['bb_upperband'] * 0.998) &  # antes 0.997
+                (dataframe['rsi'] >= 70) &                                   # antes 69
                 (
                     (dataframe['close'] < dataframe['open']) |
-                    (dataframe['macdhist'] < dataframe['macdhist'].shift(1)) |
-                    (dataframe['close'] < dataframe['ema8'])
+                    ((dataframe['macdhist'] < dataframe['macdhist'].shift(1)) & (dataframe['close'] < dataframe['ema8']))  # pide doble confirmación
                 )
             )
             |
             (
-                # HH + ruptura de EMA8 con MACD debilitando
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
                 (dataframe['close'] < dataframe['ema8']) &
-                (dataframe['rsi'] >= 61) &                                   # +1
+                (dataframe['rsi'] >= 62) &                                   # +1
                 (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
             )
             |
             reject_upper
             |
             (
-                # Atajo simple: pegado a banda sup + giro (un poco más exigente)
-                (dataframe['close'] >= dataframe['bb_upperband'] * 0.997) &  # antes 0.998 se quedaba muy pegado
-                ((dataframe['macdhist'] < dataframe['macdhist'].shift(1)) | (dataframe['close'] < dataframe['open'])) &
-                (dataframe['rsi'] >= 61)                                     # antes 58/60 → +1/3
+                # Atajo simple: un poco más exigente
+                (dataframe['close'] >= dataframe['bb_upperband'] * 0.998) &  # antes 0.997
+                ((dataframe['macdhist'] < dataframe['macdhist'].shift(1)) & (dataframe['close'] < dataframe['open'])) &  # AND
+                (dataframe['rsi'] >= 62)                                     # antes 61
             ),
             'sell'
         ] = 1
@@ -306,7 +287,7 @@ class CombinedBinHAndCluc(IStrategy):
         except Exception:
             return False
 
-    # ---------------------- EXITS (beneficio mínimo + picos) ----------------------
+    # ---------------------- EXITS ----------------------
     def custom_exit(
         self,
         pair: str,
@@ -316,7 +297,6 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
-        # Crash: fuera incluso algo en rojo
         if self._crash_incoming(pair):
             if current_profit is None or current_profit > -0.01:
                 return "crash_guard"
@@ -326,56 +306,45 @@ class CombinedBinHAndCluc(IStrategy):
             if not self._strong_bearish_reversal(pair):
                 return None
 
-        # TP duro si no hay señal pero ya hay gran tramo
         if current_profit is not None and current_profit >= self.HARD_TP:
             return "hard_tp"
 
-        # Solo si hay beneficio neto
         if current_profit is None or current_profit < self.MIN_PROFIT_NET:
             return None
 
-        # Vende en picos / rechazo
         try:
             df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
             last  = df.iloc[-1]
             prev  = df.iloc[-2]
 
             near_hh    = (last['high'] >= last['hh_20'] * 0.999) or (prev['high'] >= prev['hh_20'] * 0.999)
-            near_upper = (last['close'] >= last['bb_upperband'] * 0.997) or (last['high'] >= last['bb_upperband'])  # +0.001
-            rsi_high   = (last['rsi'] >= 69)  # +1
+            near_upper = (last['close'] >= last['bb_upperband'] * 0.998) or (last['high'] >= last['bb_upperband'])  # +0.001
+            rsi_high   = (last['rsi'] >= 70)  # +1
             bear_candle= (last['close'] < last['open'])
             macd_fade  = (last['macdhist'] < prev['macdhist'])
             ema_break  = (last['close'] < last['ema8'])
 
             if current_profit >= self.PEAK_MIN_PROFIT and near_hh and near_upper and rsi_high and (
-                (bear_candle and (macd_fade or ema_break)) or
-                (macd_fade and ema_break)
+                (bear_candle and macd_fade and ema_break)  # un poco más exigente
             ):
                 return "peak_exit_top"
 
-            # HH + ruptura EMA8 + MACD debilitando (beneficio >= 0.8%)
-            if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= prev['hh_20']) and ema_break and macd_fade and (last['rsi'] >= 61):
+            if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= prev['hh_20']) and ema_break and macd_fade and (last['rsi'] >= 62):
                 return "hh_ema8_break_exit"
 
-            # Rechazo con mecha superior amplia cerca de banda superior
             upper_wick = float(last['high'] - max(last['open'], last['close']))
             body = float(abs(last['close'] - last['open']))
-            if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * 0.9) and (upper_wick > 1.1 * body) and (last['rsi'] >= 60):
+            if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * 0.9) and (upper_wick > 1.1 * body) and (last['rsi'] >= 61):
                 return "upper_wick_reject_exit"
 
-            # Pico obvio: cerca banda superior + giro con beneficio neto (ligeramente más exigente)
-            if current_profit >= self.MIN_PROFIT_NET and near_upper and (
-                bear_candle or macd_fade or ema_break
-            ) and (last['rsi'] >= 61):
+            if current_profit >= self.MIN_PROFIT_NET and near_upper and (bear_candle and macd_fade) and (last['rsi'] >= 62):
                 return "upper_band_simple_peak"
 
-            # Pérdida de momentum tras algunas velas en beneficio
             if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
                 if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
                     return "momentum_fade_exit"
 
         except Exception:
-            # Fallback prudente: no vender salvo TP fuerte
             pass
 
         return None
@@ -390,7 +359,6 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> float:
-        # Trailing moderado cuando ya hay recorrido
         if current_profit is None or current_profit < 0.03:
             return self.stoploss
 
