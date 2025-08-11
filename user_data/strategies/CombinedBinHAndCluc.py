@@ -134,7 +134,7 @@ class CombinedBinHAndCluc(IStrategy):
 
     # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Guardas anti-cuchillo
+        # Guardas anti-cuchillo (igual que antes)
         anti_cuchillo = (
             (dataframe['pct_1'] > -1.2) &
             (dataframe['pct_3'] > -2.4) &
@@ -144,32 +144,32 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > 0)
         )
 
-        # ⛔ Evitar compras en picos / subidas (más estricto que antes)  # CHANGED
+        # ⛔ Evitar compras SOLO cuando esté realmente alto/sobrecomprado (menos agresivo)
         no_buy_high = (
-            (dataframe['close'] >= dataframe['bb_middleband']) |
-            (dataframe['close'] >= dataframe['ema_fast']) |
-            (dataframe['rsi'] >= 55) |
-            ((dataframe['stoch_k'] >= 60) & (dataframe['stoch_d'] >= 60))
+            (dataframe['close'] >= dataframe['bb_upperband'] * 0.995) |   # cerca de banda superior
+            (dataframe['rsi'] >= 62) |                                    # clara sobrecompra
+            ((dataframe['stoch_k'] >= 72) & (dataframe['stoch_d'] >= 72) &
+            (dataframe['stoch_k'] >= dataframe['stoch_d']))              # stoch subiendo en zona alta
         )
 
-        # Zonas de valor (más profundas)  # CHANGED
-        deep_bb    = (dataframe['bb_percent'] <= 0.12)
-        bb_zone_ok = (dataframe['bb_percent'] <= 0.28)
+        # Zonas de valor (menos estrictas para que haya entradas)
+        deep_bb    = (dataframe['bb_percent'] <= 0.18)
+        bb_zone_ok = (dataframe['bb_percent'] <= 0.36)
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > 1.15 * body
 
-        # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)  # tightened
+        # A) Mínimo local + giro RSI + martillo/volumen (ligeramente más permisivo)
         A = (
             (dataframe['loc_trough']) &
-            ((dataframe['low'] <= dataframe['ll_10'] * 1.003) | deep_bb) &
-            (dataframe['rsi_prev'] < 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            ((dataframe['low'] <= dataframe['ll_10'] * 1.006) | deep_bb) &
+            (dataframe['rsi_prev'] < 50) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
             (hammerish | dataframe['vol_spike'])
         )
 
-        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro (profunda)  # tightened
+        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro
         B = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
@@ -177,16 +177,16 @@ class CombinedBinHAndCluc(IStrategy):
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + MACD no empeora + zona baja BB  # unchanged but bounded
+        # C) StochRSI cruce en sobreventa + MACD no empeora + zona baja BB
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 35) & (dataframe['stoch_d'] < 35) &
+            (dataframe['stoch_k'] < 40) & (dataframe['stoch_d'] < 40) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
             (bb_zone_ok)
         )
 
-        # D) Capitulación: vela muy roja previa / colas largas + rebote verde  # unchanged
+        # D) Capitulación fuerte + rebote (se mantiene)
         D = (
             ((dataframe['pct_1'] <= -1.8) | (dataframe['pct_3'] <= -3.5)) &
             (dataframe['bb_percent'] <= 0.05) &
@@ -194,9 +194,17 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # ⚠️ Quitamos E y F para reducir compras en rebotes/mitad de subida  # CHANGED
+        # Puerta de estructura: entrar abajo/medio-bajo, no en mitad de subida
+        structure_ok = (
+            (dataframe['close'] <= dataframe['bb_middleband'] * 1.01) |
+            (dataframe['close'] <= dataframe['ema_fast'] * 1.00)
+        )
+
         dataframe.loc[
-            ((A | B | C | D) & anti_cuchillo & ~no_buy_high) | D,
+            (
+                ((A | B | C | D) & anti_cuchillo & ~no_buy_high & structure_ok)
+                | D   # capitulación siempre permitida
+            ),
             'buy'
         ] = 1
         return dataframe
