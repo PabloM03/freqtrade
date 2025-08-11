@@ -1,10 +1,10 @@
 {
     "$schema": "https://schema.freqtrade.io/schema.json",
     "max_open_trades": 3,
-    "stake_currency": "USDT",
+    "stake_currency": "USDC",
     "stake_amount": 25,
     "tradable_balance_ratio": 0.99,
-    "fiat_display_currency": "USD",
+    "fiat_display_currency": "EUR",
     "timeframe": "5m",
     "dry_run": true,
     "db_url": "sqlite:///trades.sqlite",
@@ -40,23 +40,23 @@
       "ccxt_config": {},
       "ccxt_async_config": {},
       "pair_whitelist": [
-	"BTC/USDT",
-	"ETH/USDT",
-	"SOL/USDT",
-        "PEPE/USDT",
-        "DOGE/USDT",
-        "SHIB/USDT",
-        "BONK/USDT",
-        "WIF/USDT",
-        "TURBO/USDT"
+	"SOL/USDC",
+        "PEPE/USDC",
+        "DOGE/USDC",
+        "SHIB/USDC",
+        "BONK/USDC",
+        "WIF/USDC",
+        "TURBO/USDC",
+	"LTC/USDC"
       ],
       "pair_blacklist": [
+	"BTC/USDC",
+    	"ETH/USDC",
 	"BNB/.*",
   	".*(UP|DOWN|BEAR|BULL).*",
   	".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
 
-  	"^(USDC|BUSD|TUSD|FDUSD)/.*",   // como BASE
-  	".*/(USDC|BUSD|TUSD|FDUSD)$"    // como QUOTE
+  	"^(USDC|BUSD|TUSD|FDUSD)/.*",   
     ]
     },
     "pairlists": [
@@ -66,7 +66,7 @@
         "sort_key": "quoteVolume",
         "min_value": 0,
         "refresh_period": 900
-      },
+      }
     ],
     "telegram": {
       "enabled": false,
