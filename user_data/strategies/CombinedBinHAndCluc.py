@@ -118,7 +118,7 @@ class CombinedBinHAndCluc(IStrategy):
         # Volumen relativo
         dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * 1.15)
 
-        # Máximo/mínimo local reciente
+        # Máximo/mínimo local reciente (ventanas cortas) para “picos/vales óptimos”
         dataframe['loc_peak'] = (
             (dataframe['high'] >= dataframe['high'].rolling(6).max()) &
             (dataframe['high'] >= dataframe['high'].shift(1)) &
@@ -134,7 +134,6 @@ class CombinedBinHAndCluc(IStrategy):
 
     # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Guardas anti-cuchillo (igual que antes)
         anti_cuchillo = (
             (dataframe['pct_1'] > -1.2) &
             (dataframe['pct_3'] > -2.4) &
@@ -144,32 +143,31 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['volume'] > 0)
         )
 
-        # ⛔ Evitar compras SOLO cuando esté realmente alto/sobrecomprado (menos agresivo)
+        # Evitar compras “arriba”
         no_buy_high = (
-            (dataframe['close'] >= dataframe['bb_upperband'] * 0.995) |   # cerca de banda superior
-            (dataframe['rsi'] >= 62) |                                    # clara sobrecompra
-            ((dataframe['stoch_k'] >= 72) & (dataframe['stoch_d'] >= 72) &
-            (dataframe['stoch_k'] >= dataframe['stoch_d']))              # stoch subiendo en zona alta
+            (dataframe['close'] > dataframe['bb_middleband'] * 1.02) &
+            (dataframe['close'] > dataframe['ema_fast']) &
+            (dataframe['rsi'] > 57)
         )
 
-        # Zonas de valor (menos estrictas para que haya entradas)
-        deep_bb    = (dataframe['bb_percent'] <= 0.18)
-        bb_zone_ok = (dataframe['bb_percent'] <= 0.36)
+        # Zonas de valor (un poco más estrictas para que sean “bajadas óptimas”)
+        deep_bb    = (dataframe['bb_percent'] <= 0.20)
+        bb_zone_ok = (dataframe['bb_percent'] <= 0.35)
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > 1.15 * body
 
-        # A) Mínimo local + giro RSI + martillo/volumen (ligeramente más permisivo)
+        # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)
         A = (
             (dataframe['loc_trough']) &
-            ((dataframe['low'] <= dataframe['ll_10'] * 1.006) | deep_bb) &
-            (dataframe['rsi_prev'] < 50) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            ((dataframe['low'] <= dataframe['ll_10'] * 1.004) | deep_bb) &
+            (dataframe['rsi_prev'] < 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
             (hammerish | dataframe['vol_spike'])
         )
 
-        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro
+        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro (clásico y muy abajo)
         B = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
@@ -177,16 +175,16 @@ class CombinedBinHAndCluc(IStrategy):
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + MACD no empeora + zona baja BB
+        # C) StochRSI cruce en sobreventa + MACD no empeora + en zona baja BB
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 40) & (dataframe['stoch_d'] < 40) &
+            (dataframe['stoch_k'] < 35) & (dataframe['stoch_d'] < 35) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
             (bb_zone_ok)
         )
 
-        # D) Capitulación fuerte + rebote (se mantiene)
+        # D) Capitulación: vela muy roja previa / colas largas + rebote verde
         D = (
             ((dataframe['pct_1'] <= -1.8) | (dataframe['pct_3'] <= -3.5)) &
             (dataframe['bb_percent'] <= 0.05) &
@@ -194,22 +192,32 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # Puerta de estructura: entrar abajo/medio-bajo, no en mitad de subida
-        structure_ok = (
-            (dataframe['close'] <= dataframe['bb_middleband'] * 1.01) |
-            (dataframe['close'] <= dataframe['ema_fast'] * 1.00)
+        # E) Pullback controlado a EMA8 ascendente en zona media-baja
+        E = (
+            (dataframe['close'] > dataframe['ema8']) &
+            (dataframe['close'].shift(1) <= dataframe['ema8'].shift(1)) &
+            (dataframe['ema8_slope_up']) &
+            (dataframe['rsi'] >= 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            ((dataframe['low'] <= dataframe['ll_10'] * 1.01) | (dataframe['close'] <= dataframe['bb_middleband'] * 1.01) | bb_zone_ok) &
+            (dataframe['vol_spike'] | hammerish)
+        )
+
+        # F) Doble toque / higher-low sutil en zona baja (confirmación de valle)
+        F = (
+            (dataframe['bb_percent'] <= 0.30) &
+            (dataframe['low'] <= dataframe['ll_10'] * 1.005) &
+            (dataframe['low'] >= dataframe['ll_10'].shift(1) * 0.992) &
+            (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['close'] >= dataframe['open'])
         )
 
         dataframe.loc[
-            (
-                ((A | B | C | D) & anti_cuchillo & ~no_buy_high & structure_ok)
-                | D   # capitulación siempre permitida
-            ),
+            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high) | D),  # D (capitulación) siempre permitida
             'buy'
         ] = 1
         return dataframe
 
-    # ---------------------- VENTAS (solo picos óptimos) ----------------------
+    # ---------------------- VENTAS (picos más óptimos) ----------------------
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Rechazo fuerte cerca de banda superior (mecha y RSI alto)
         reject_upper = (
@@ -219,7 +227,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['rsi'] >= 60)
         )
 
-        # ✅ Pico óptimo (único patrón principal)  # CHANGED
+        # Pico óptimo: máximo local + proximidad a banda sup + RSI alto + giro (MACD/EMA/vela)
         dataframe.loc[
             (
                 (dataframe['loc_peak']) &
@@ -230,6 +238,15 @@ class CombinedBinHAndCluc(IStrategy):
                     (dataframe['close'] < dataframe['ema8']) |
                     (dataframe['close'] < dataframe['open'])
                 )
+            )
+            |
+            (
+                # Máximo del rango + ruptura EMA8 posterior con MACD debilitando
+                (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
+                (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
+                (dataframe['close'] < dataframe['ema8']) &
+                (dataframe['rsi'] >= 62) &
+                (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
             )
             |
             reject_upper,
@@ -304,24 +321,26 @@ class CombinedBinHAndCluc(IStrategy):
             macd_fade  = (last['macdhist'] < prev['macdhist'])
             ema_break  = (last['close'] < last['ema8'])
 
-            # ✅ Pico óptimo (principal)
+            # Pico óptimo: banda sup + máximo local + giro claro
             if current_profit >= self.PEAK_MIN_PROFIT and near_upper and loc_peak and rsi_high and (
                 bear_candle or macd_fade or ema_break
             ):
                 return "peak_exit_top_optimal"
 
-            # ✅ Rechazo de mecha grande en zona alta
+            # HH + ruptura EMA8 + MACD debilitando (clásico)
+            if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= 62):
+                return "hh_ema8_break_exit"
+
+            # Rechazo de mecha grande en zona alta
             upper_wick = float(last['high'] - max(last['open'], last['close']))
             body = float(abs(last['close'] - last['open']))
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * 0.9) and (upper_wick > 1.1 * body) and (last['rsi'] >= 61):
                 return "upper_wick_reject_exit"
 
-            # ❌ Desactivado para filtrar ventas no de pico  # CHANGED
-            # if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= 62):
-            #     return "hh_ema8_break_exit"
-            # if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
-            #     if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
-            #         return "momentum_fade_exit"
+            # Pérdida de momentum tras varias velas en verde
+            if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
+                if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
+                    return "momentum_fade_exit"
 
         except Exception:
             pass
@@ -366,3 +385,4 @@ class CombinedBinHAndCluc(IStrategy):
             return stoploss_from_open(current_profit, max(0.018, dist))
 
         return stoploss_from_open(current_profit, dist)
+
