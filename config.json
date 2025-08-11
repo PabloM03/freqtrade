@@ -56,7 +56,7 @@
         ".*(UP|DOWN|BEAR|BULL).*",
         ".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*",
 
-        "^(USDC|BUSD|TUSD|FDUSD)/.*",
+        "^(USDC|BUSD|TUSD|FDUSD)/.*"
     ]
     },
     "pairlists": [
