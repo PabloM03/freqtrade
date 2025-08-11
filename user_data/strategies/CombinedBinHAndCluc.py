@@ -134,87 +134,88 @@ class CombinedBinHAndCluc(IStrategy):
 
     # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Un pelín más permisivo con caídas fuertes (deja acercarse más al cuchillo, sin comérselo)
         anti_cuchillo = (
-            (dataframe['pct_1'] > -1.2) &
-            (dataframe['pct_3'] > -2.4) &
+            (dataframe['pct_1'] > -1.6) &          # antes -1.2
+            (dataframe['pct_3'] > -3.2) &          # antes -2.4
             (~dataframe['cooldown'].astype(bool)) &
             (~((dataframe['bb_percent'] < 0) & dataframe['bb_expanding'])) &
             (dataframe['minus_di'] <= dataframe['plus_di']) &
             (dataframe['volume'] > 0)
         )
 
-        # Evitar compras “arriba”
+        # Nunca alto, pero dejamos 0.5% de margen sobre medias
         no_buy_high = (
-            (dataframe['close'] > dataframe['bb_middleband'] * 1.02) &
-            (dataframe['close'] > dataframe['ema_fast']) &
-            (dataframe['rsi'] > 57)
+            (dataframe['close'] > dataframe['bb_middleband'] * 1.005) |   # antes *1.0
+            (dataframe['close'] > dataframe['ema_fast'] * 1.005) |        # antes *1.0
+            (dataframe['rsi'] > 60)                                       # antes 57
         )
 
-        # Zonas de valor (un poco más estrictas para que sean “bajadas óptimas”)
-        deep_bb    = (dataframe['bb_percent'] <= 0.20)
-        bb_zone_ok = (dataframe['bb_percent'] <= 0.35)
+        # Zonas de valor un poco más amplias
+        deep_bb    = (dataframe['bb_percent'] <= 0.20)    # antes 0.15
+        bb_zone_ok = (dataframe['bb_percent'] <= 0.45)    # antes 0.35
+
+        # Guard de valle: permitimos estar muy cerca (<= +0.5%) de medias
+        valley_guard = (
+            (dataframe['close'] <= dataframe['bb_middleband'] * 1.005) &
+            (dataframe['close'] <= dataframe['ema_fast'] * 1.005) &
+            bb_zone_ok
+        )
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
-        hammerish  = lower_wick > 1.15 * body
+        hammerish  = lower_wick > 1.1 * body               # antes 1.15
 
-        # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)
+        # A) Mínimo local + giro RSI + martillo/volumen
         A = (
             (dataframe['loc_trough']) &
-            ((dataframe['low'] <= dataframe['ll_10'] * 1.004) | deep_bb) &
-            (dataframe['rsi_prev'] < 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open']) &
+            ((dataframe['low'] <= dataframe['ll_10'] * 1.006) | deep_bb) &  # antes 1.004
+            (dataframe['rsi_prev'] < 48) &                                   # antes 45
+            (dataframe['rsi'] > dataframe['rsi_prev']) &
             (hammerish | dataframe['vol_spike'])
         )
 
-        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro (clásico y muy abajo)
+        # B) Re-entrada tras cerrar fuera de banda inferior
         B = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
-            (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (bb_zone_ok)
+            (dataframe['rsi'] >= dataframe['rsi_prev']) &
+            bb_zone_ok
         )
 
-        # C) StochRSI cruce en sobreventa + MACD no empeora + en zona baja BB
+        # C) StochRSI cruce en sobreventa + MACD no empeora
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < 35) & (dataframe['stoch_d'] < 35) &
+            (dataframe['stoch_k'] < 40) & (dataframe['stoch_d'] < 40) &      # antes 35/35
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
-            (bb_zone_ok)
+            bb_zone_ok
         )
 
-        # D) Capitulación: vela muy roja previa / colas largas + rebote verde
+        # D) Capitulación fuerte + rebote
         D = (
-            ((dataframe['pct_1'] <= -1.8) | (dataframe['pct_3'] <= -3.5)) &
-            (dataframe['bb_percent'] <= 0.05) &
-            (dataframe['tail'] >= dataframe['atr'] * 1.0) &
+            ((dataframe['pct_1'] <= -1.8) | (dataframe['pct_3'] <= -3.8)) &   # 3.5 -> 3.8
+            (dataframe['bb_percent'] <= 0.08) &                               # 0.05 -> 0.08
+            (dataframe['tail'] >= dataframe['atr'] * 0.9) &                   # 1.0 -> 0.9
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # E) Pullback controlado a EMA8 ascendente en zona media-baja
-        E = (
-            (dataframe['close'] > dataframe['ema8']) &
-            (dataframe['close'].shift(1) <= dataframe['ema8'].shift(1)) &
-            (dataframe['ema8_slope_up']) &
-            (dataframe['rsi'] >= 45) & (dataframe['rsi'] > dataframe['rsi_prev']) &
-            ((dataframe['low'] <= dataframe['ll_10'] * 1.01) | (dataframe['close'] <= dataframe['bb_middleband'] * 1.01) | bb_zone_ok) &
-            (dataframe['vol_spike'] | hammerish)
-        )
-
-        # F) Doble toque / higher-low sutil en zona baja (confirmación de valle)
+        # F) Doble toque / HL sutil en zona baja
         F = (
-            (dataframe['bb_percent'] <= 0.30) &
-            (dataframe['low'] <= dataframe['ll_10'] * 1.005) &
-            (dataframe['low'] >= dataframe['ll_10'].shift(1) * 0.992) &
-            (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open'])
+            (dataframe['bb_percent'] <= 0.35) &                               # 0.30 -> 0.35
+            (dataframe['low'] <= dataframe['ll_10'] * 1.007) &                # 1.005 -> 1.007
+            (dataframe['low'] >= dataframe['ll_10'].shift(1) * 0.990) &       # 0.992 -> 0.990
+            (dataframe['rsi'] > dataframe['rsi_prev'])
         )
+
+        setup = (A | B | C | D | F)
 
         dataframe.loc[
-            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high) | D),  # D (capitulación) siempre permitida
+            (setup & anti_cuchillo & valley_guard & ~no_buy_high) |
+            (D & ~no_buy_high),   # capitulación permitida si no está “alta”
             'buy'
         ] = 1
+
         return dataframe
 
     # ---------------------- VENTAS (picos más óptimos) ----------------------
