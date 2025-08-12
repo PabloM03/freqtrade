@@ -120,7 +120,7 @@ class CombinedBinHAndCluc(IStrategy):
     timeframe = TIMEFRAME
     startup_candle_count = STARTUP_CANDLES
 
-    use_sell_signal = True
+    use_sell_signal = False
     sell_profit_only = True
     ignore_roi_if_buy_signal = False
     trailing_stop = False
