@@ -13,86 +13,85 @@ from freqtrade.persistence import Trade
 # ==========================
 # 📌 PARÁMETROS GLOBALES AJUSTABLES
 # ==========================
-
 # --- Costes y ganancias mínimas ---
-FEE_RATE = 0.001
-SLIPPAGE_BUFFER = 0.0005
-MIN_PROFIT_NET = 2 * FEE_RATE + SLIPPAGE_BUFFER  # ~0.25% neto
-PEAK_MIN_PROFIT = 0.0065       # Beneficio mínimo para salida en pico óptimo
-HH_EMA_MIN_PROFIT = 0.008      # Beneficio mínimo para salida por ruptura EMA8
-HARD_TP = 0.018                # Take profit fijo
+FEE_RATE = 0.001                # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
+SLIPPAGE_BUFFER = 0.0005        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes. Rango típico: 0.0002-0.001. Subirlo exige más beneficio antes de vender.
+MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento. Rango típico: 0.002-0.004. Subirlo exige más beneficio antes de vender.
+PEAK_MIN_PROFIT = 0.0065        # 🏔️ Beneficio mínimo para permitir salida en pico óptimo (máximos locales). Rango típico: 0.004-0.01. Subirlo hace más exigente la venta en picos.
+HH_EMA_MIN_PROFIT = 0.009       # 📊 Beneficio mínimo para salida por ruptura de EMA8 tras un máximo. Rango típico: 0.006-0.012. Subirlo hace más difícil vender tras máximos.
+HARD_TP = 0.02                  # 🎯 Take profit fijo para asegurar ganancias si se alcanza. Rango típico: 0.01-0.03. Subirlo busca ganancias mayores pero puede perder retrocesos.
 
 # --- Stoploss y trailing ---
-STOPLOSS_ABS = -0.05           # Stoploss absoluto
-TRAIL_ATR_MULT_LOW = 2.0       # Multiplicador ATR si beneficio < 6%
-TRAIL_ATR_MULT_HIGH = 2.4      # Multiplicador ATR si beneficio >= 6%
-TRAIL_DIST_MIN = 0.016         # Distancia mínima trailing
-TRAIL_DIST_MAX = 0.032         # Distancia máxima trailing
-TRAIL_VERTICAL_MIN = 0.022     # Distancia mínima si rally vertical
-ADX_STRONG_TREND = 25          # ADX mínimo para considerar tendencia fuerte
-ROC5_VERTICAL = 3              # ROC5 mínimo para rally vertical
-FALLBACK_TRAIL_DIST = 0.018    # Distancia fallback si falla el DF
+STOPLOSS_ABS = -0.05            # 🛑 Stoploss absoluto para limitar pérdidas máximas por operación. Rango típico: -0.03 a -0.08. Subirlo (menos negativo) reduce pérdidas pero puede saltar antes.
+TRAIL_ATR_MULT_LOW = 2.0        # 🐢 Multiplicador de ATR para trailing stop si beneficio bajo (stop más ajustado). Rango típico: 1.5-2.5. Subirlo aleja el trailing stop.
+TRAIL_ATR_MULT_HIGH = 2.4       # 🦅 Multiplicador de ATR para trailing stop si beneficio alto (stop más holgado). Rango típico: 2.0-3.0. Subirlo aleja el trailing stop en beneficios altos.
+TRAIL_DIST_MIN = 0.016          # 📏 Distancia mínima para trailing stop, evita stops demasiado ajustados. Rango típico: 0.01-0.02. Subirlo da más margen antes de saltar el stop.
+TRAIL_DIST_MAX = 0.032          # 📏 Distancia máxima para trailing stop, evita stops demasiado lejanos. Rango típico: 0.025-0.04. Subirlo permite stops más lejanos.
+TRAIL_VERTICAL_MIN = 0.022      # 🚀 Distancia mínima para trailing si hay rally vertical. Rango típico: 0.015-0.03. Subirlo da más margen en subidas rápidas.
+ADX_STRONG_TREND = 25           # 💪 Valor mínimo de ADX para considerar tendencia fuerte (mayor protección trailing). Rango típico: 20-35. Subirlo exige tendencia más fuerte para trailing holgado.
+ROC5_VERTICAL = 3               # 📈 ROC5 mínimo para considerar rally vertical. Rango típico: 2-5. Subirlo exige movimientos más bruscos para activar trailing vertical.
+FALLBACK_TRAIL_DIST = 0.018     # 🛟 Distancia fallback si falla el cálculo de trailing dinámico. Rango típico: 0.012-0.025. Subirlo da más margen de seguridad.
 
 # --- Anti-cuchillo ---
-PCT1_MIN = -1.2                # % caída máxima 1 vela para comprar
-PCT3_MIN = -2.4                # % caída máxima 3 velas para comprar
-COOLDOWN_BARS = 5              # Velas de enfriamiento tras vela roja grande
+PCT1_MIN = -1.4                 # 🔪 Caída máxima en 1 vela para permitir compra (evita comprar en caídas bruscas). Rango típico: -1.0 a -2.0. Bajarlo permite compras en caídas más fuertes.
+PCT3_MIN = -2.6                 # 🔪 Caída máxima en 3 velas para permitir compra (protege de tendencias bajistas fuertes). Rango típico: -2.0 a -4.0. Bajarlo permite compras en tendencias más bajistas.
+COOLDOWN_BARS = 3               # 🧊 Número de velas de enfriamiento tras una vela roja grande. Rango típico: 2-6. Subirlo aumenta el tiempo sin comprar tras caídas fuertes.
 
 # --- Filtro de compras altas ---
-NO_BUY_BB_MULT = 1.02          # Multiplicador banda media BB para "alto"
-NO_BUY_EMA20_MULT = 1.0        # Multiplicador EMA20 para "alto"
-NO_BUY_RSI_MIN = 57            # RSI mínimo para evitar compra alta
+NO_BUY_BB_MULT = 1.1            # 🚫 Multiplicador de la banda media BB para evitar compras "arriba". Rango típico: 1.01-1.15. Subirlo permite comprar más alto.
+NO_BUY_EMA20_MULT = 1.0         # 🚫 Multiplicador de EMA20 para evitar compras "arriba". Rango típico: 1.0-1.05. Subirlo permite comprar más alto.
+NO_BUY_RSI_MIN = 57             # 🚫 RSI mínimo para evitar compras en sobrecompra. Rango típico: 55-65. Subirlo evita compras en zonas más sobrecompradas.
 
 # --- Zonas de valor para comprar ---
-DEEP_BB = 0.20                 # Profundidad para considerar "deep BB"
-BB_ZONE_OK = 0.35              # BB% máximo para zona de compra
-LOWER_WICK_BODY_RATIO = 1.15   # Relación mecha inferior/cuerpo para martillo
+DEEP_BB = 0.20                  # 🏦 Profundidad máxima de BB% para considerar compra en zona muy baja. Rango típico: 0.15-0.25. Subirlo permite compras menos profundas.
+BB_ZONE_OK = 0.35               # 🏦 BB% máximo para considerar zona de compra aceptable. Rango típico: 0.3-0.45. Subirlo permite compras en zonas menos bajas.
+LOWER_WICK_BODY_RATIO = 1.15    # 🕯️ Relación mecha inferior/cuerpo para identificar velas tipo martillo. Rango típico: 1.1-1.3. Subirlo exige mechas más largas para considerar giro.
 
 # --- Reglas de compra específicas ---
 # A) Mínimo local
-A_LL10_MULT = 1.004
-A_RSI_PREV_MAX = 45
+A_LL10_MULT = 1.004             # 📉 Multiplicador para comparar el mínimo local con el mínimo de las últimas 10 velas. Rango típico: 1.002-1.01. Subirlo exige mínimos más bajos para detectar valle.
+A_RSI_PREV_MAX = 45             # 📉 RSI máximo previo para permitir compra en giro alcista tras sobreventa. Rango típico: 40-50. Subirlo permite compras con menos sobreventa previa.
 # B) Re-entrada tras BB baja -> usa BB_ZONE_OK
 # C) StochRSI en sobreventa
-C_STOCH_MAX = 35
+C_STOCH_MAX = 35                # 📉 Valor máximo de StochRSI para considerar sobreventa y posible rebote. Rango típico: 30-40. Subirlo permite compras con menos sobreventa.
 # D) Capitulación
-D_PCT1_MAX = -1.8
-D_PCT3_MAX = -3.5
-D_BB_PERCENT_MAX = 0.05
-D_TAIL_ATR_MULT = 1.0
+D_PCT1_MAX = -1.8               # 💥 Caída máxima en 1 vela para detectar capitulación. Rango típico: -1.5 a -2.5. Bajarlo detecta capitulaciones más bruscas.
+D_PCT3_MAX = -3.5               # 💥 Caída máxima en 3 velas para detectar capitulación. Rango típico: -3.0 a -5.0. Bajarlo detecta capitulaciones más fuertes.
+D_BB_PERCENT_MAX = 0.05         # 💥 BB% máximo para capitulación (muy cerca de la banda inferior). Rango típico: 0.03-0.08. Subirlo permite capitulación menos extrema.
+D_TAIL_ATR_MULT = 1.0           # 💥 Multiplicador de ATR para la cola de la vela (mecha larga indica rebote). Rango típico: 0.8-1.5. Subirlo exige mechas más largas.
 # E) Pullback a EMA8
-E_RSI_MIN = 45
-E_LL10_MULT = 1.01
-E_BB_MID_MULT = 1.01
+E_RSI_MIN = 45                  # 🔄 RSI mínimo para permitir pullback alcista. Rango típico: 40-50. Subirlo exige más fuerza en el rebote.
+E_LL10_MULT = 1.01              # 🔄 Multiplicador para comparar el mínimo con el mínimo de 10 velas. Rango típico: 1.005-1.02. Subirlo exige mínimos más bajos.
+E_BB_MID_MULT = 1.01            # 🔄 Multiplicador para comparar el precio con la banda media BB. Rango típico: 1.005-1.02. Subirlo exige precios más bajos respecto a la banda media.
 # F) Doble toque en valle
-F_BB_PERCENT_MAX = 0.30
-F_LL10_UPPER = 1.005
-F_LL10_LOWER = 0.992
+F_BB_PERCENT_MAX = 0.30         # 🏞️ BB% máximo para doble toque en valle. Rango típico: 0.25-0.35. Subirlo permite doble toque en zonas menos bajas.
+F_LL10_UPPER = 1.005            # 🏞️ Multiplicador superior para doble toque. Rango típico: 1.002-1.01. Subirlo permite más diferencia entre toques.
+F_LL10_LOWER = 0.992            # 🏞️ Multiplicador inferior para doble toque. Rango típico: 0.98-0.995. Bajarlo permite más diferencia entre toques.
 
 # --- Ventas ---
-REJECT_UPPER_ATR_MULT = 0.9
-REJECT_WICK_BODY_RATIO = 1.2
-SELL_RSI_PEAK = 70
-SELL_RSI_REJECT = 60
-SELL_RSI_HH_EMA = 62
-SELL_RSI_WICK = 61
+REJECT_UPPER_ATR_MULT = 0.9     # 🚩 Multiplicador de ATR para detectar mecha superior grande. Rango típico: 0.8-1.2. Subirlo exige mechas más largas para vender.
+REJECT_WICK_BODY_RATIO = 1.2    # 🚩 Relación mecha/cuerpo para identificar rechazo fuerte. Rango típico: 1.1-1.4. Subirlo exige mechas más largas respecto al cuerpo.
+SELL_RSI_PEAK = 70              # 🚩 RSI mínimo para vender en pico. Rango típico: 65-75. Subirlo exige sobrecompra más fuerte.
+SELL_RSI_REJECT = 55            # 🚩 RSI mínimo para vender por rechazo en zona alta. Rango típico: 55-65. Subirlo exige más sobrecompra para vender por rechazo.
+SELL_RSI_HH_EMA = 58            # 🚩 RSI mínimo para vender tras ruptura de EMA8 en máximos. Rango típico: 58-65. Subirlo exige más sobrecompra.
+SELL_RSI_WICK = 58              # 🚩 RSI mínimo para vender por mecha superior grande. Rango típico: 58-65. Subirlo exige más sobrecompra.
 
 # --- Crash-guard ---
-CRASH_FAST_DROP_EMA8 = 0.992
-CRASH_FAST_DROP_PCT1 = -0.7
-CRASH_ATR_BREAK_MULT = 1.6
-CRASH_ADX_MIN = 22
-CRASH_RSI_MAX = 48
+CRASH_FAST_DROP_EMA8 = 0.992    # ⚡ Multiplicador para detectar caída rápida bajo EMA8. Rango típico: 0.99-0.995. Bajarlo detecta caídas más leves.
+CRASH_FAST_DROP_PCT1 = -0.7     # ⚡ Caída máxima en 1 vela para crash-guard. Rango típico: -0.5 a -1.0. Bajarlo detecta caídas más leves.
+CRASH_ATR_BREAK_MULT = 1.6      # ⚡ Multiplicador de ATR para detectar ruptura fuerte bajo EMA. Rango típico: 1.3-2.0. Subirlo exige rupturas más grandes.
+CRASH_ADX_MIN = 22              # ⚡ ADX mínimo para considerar crash. Rango típico: 18-28. Subirlo exige tendencia bajista más fuerte.
+CRASH_RSI_MAX = 48              # ⚡ RSI máximo para crash. Rango típico: 45-52. Subirlo permite crash-guard con menos sobreventa.
 
 # --- Timeframe y arranque ---
-TIMEFRAME = '5m'
-STARTUP_CANDLES = 100
+TIMEFRAME = '5m'                # ⏰ Timeframe de operación. Rango típico: '1m', '5m', '15m'. Cambiarlo afecta la frecuencia y sensibilidad de señales.
+STARTUP_CANDLES = 100           # ⏰ Número de velas iniciales requeridas para calcular indicadores. Rango típico: 50-150. Subirlo mejora precisión de indicadores largos.
 
 # --- Bollinger config ---
-BB40_WINDOW = 40
-BB40_STDS = 2
-BB20_WINDOW = 20
-BB20_STDS = 2
+BB40_WINDOW = 40                # 📊 Ventana de velas para Bollinger Bands largas. Rango típico: 30-60. Subirlo suaviza las bandas.
+BB40_STDS = 1.8                 # 📊 Desviaciones estándar para BB40. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
+BB20_WINDOW = 20                # 📊 Ventana de velas para Bollinger Bands cortas. Rango típico: 15-30. Subirlo suaviza las bandas.
+BB20_STDS = 2                   # 📊 Desviaciones estándar para BB20. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
 
 
 def bollinger_bands(stock_price, window_size, num_of_std):
@@ -528,3 +527,88 @@ class CombinedBinHAndCluc(IStrategy):
             return stoploss_from_open(current_profit, max(0.018, dist))
 
         return stoploss_from_open(current_profit, dist)
+
+
+"""
+
+# --- Costes y ganancias mínimas ---
+FEE_RATE = 0.001                # 💸 Comisión por operación (0.1%). Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes.
+SLIPPAGE_BUFFER = 0.0005        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes (0.05%).
+MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento (~0.25%).
+PEAK_MIN_PROFIT = 0.0065        # 🏔️ Beneficio mínimo (0.65%) para permitir salida en pico óptimo (máximos locales).
+HH_EMA_MIN_PROFIT = 0.008       # 📊 Beneficio mínimo (0.8%) para salida por ruptura de EMA8 tras un máximo.
+HARD_TP = 0.018                 # 🎯 Take profit fijo (1.8%) para asegurar ganancias si se alcanza.
+
+# --- Stoploss y trailing ---
+STOPLOSS_ABS = -0.05            # 🛑 Stoploss absoluto (-5%) para limitar pérdidas máximas por operación.
+TRAIL_ATR_MULT_LOW = 2.0        # 🐢 Multiplicador de ATR para trailing stop si beneficio < 6% (stop más ajustado).
+TRAIL_ATR_MULT_HIGH = 2.4       # 🦅 Multiplicador de ATR para trailing stop si beneficio >= 6% (stop más holgado).
+TRAIL_DIST_MIN = 0.016          # 📏 Distancia mínima (1.6%) para trailing stop, evita stops demasiado ajustados.
+TRAIL_DIST_MAX = 0.032          # 📏 Distancia máxima (3.2%) para trailing stop, evita stops demasiado lejanos.
+TRAIL_VERTICAL_MIN = 0.022      # 🚀 Distancia mínima (2.2%) para trailing si hay rally vertical (subida muy rápida).
+ADX_STRONG_TREND = 25           # 💪 Valor mínimo de ADX para considerar tendencia fuerte (mayor protección trailing).
+ROC5_VERTICAL = 3               # 📈 ROC5 mínimo para considerar rally vertical (cambios rápidos de precio).
+FALLBACK_TRAIL_DIST = 0.018     # 🛟 Distancia fallback (1.8%) si falla el cálculo de trailing dinámico.
+
+# --- Anti-cuchillo ---
+PCT1_MIN = -1.2                 # 🔪 Caída máxima (-1.2%) en 1 vela para permitir compra (evita comprar en caídas bruscas).
+PCT3_MIN = -2.4                 # 🔪 Caída máxima (-2.4%) en 3 velas para permitir compra (protege de tendencias bajistas fuertes).
+COOLDOWN_BARS = 5               # 🧊 Número de velas de enfriamiento tras una vela roja grande (evita compras precipitadas).
+
+# --- Filtro de compras altas ---
+NO_BUY_BB_MULT = 1.02           # 🚫 Multiplicador de la banda media BB para evitar compras "arriba" (precio > 102% de la banda media).
+NO_BUY_EMA20_MULT = 1.0         # 🚫 Multiplicador de EMA20 para evitar compras "arriba" (precio > EMA20).
+NO_BUY_RSI_MIN = 57             # 🚫 RSI mínimo para evitar compras en sobrecompra (RSI > 57).
+
+# --- Zonas de valor para comprar ---
+DEEP_BB = 0.20                  # 🏦 Profundidad máxima de BB% (20%) para considerar compra en zona muy baja.
+BB_ZONE_OK = 0.35               # 🏦 BB% máximo (35%) para considerar zona de compra aceptable.
+LOWER_WICK_BODY_RATIO = 1.15    # 🕯️ Relación mecha inferior/cuerpo para identificar velas tipo martillo (potencial giro alcista).
+
+# --- Reglas de compra específicas ---
+# A) Mínimo local
+A_LL10_MULT = 1.004             # 📉 Multiplicador para comparar el mínimo local con el mínimo de las últimas 10 velas (detecta valles).
+A_RSI_PREV_MAX = 45             # 📉 RSI máximo previo para permitir compra en giro alcista tras sobreventa.
+# B) Re-entrada tras BB baja -> usa BB_ZONE_OK
+# C) StochRSI en sobreventa
+C_STOCH_MAX = 35                # 📉 Valor máximo de StochRSI para considerar sobreventa y posible rebote.
+# D) Capitulación
+D_PCT1_MAX = -1.8               # 💥 Caída máxima (-1.8%) en 1 vela para detectar capitulación.
+D_PCT3_MAX = -3.5               # 💥 Caída máxima (-3.5%) en 3 velas para detectar capitulación.
+D_BB_PERCENT_MAX = 0.05         # 💥 BB% máximo (5%) para capitulación (muy cerca de la banda inferior).
+D_TAIL_ATR_MULT = 1.0           # 💥 Multiplicador de ATR para la cola de la vela (mecha larga indica rebote).
+# E) Pullback a EMA8
+E_RSI_MIN = 45                  # 🔄 RSI mínimo para permitir pullback alcista.
+E_LL10_MULT = 1.01              # 🔄 Multiplicador para comparar el mínimo con el mínimo de 10 velas (pullback controlado).
+E_BB_MID_MULT = 1.01            # 🔄 Multiplicador para comparar el precio con la banda media BB (zona media-baja).
+# F) Doble toque en valle
+F_BB_PERCENT_MAX = 0.30         # 🏞️ BB% máximo (30%) para doble toque en valle.
+F_LL10_UPPER = 1.005            # 🏞️ Multiplicador superior para doble toque (precio apenas por encima del mínimo anterior).
+F_LL10_LOWER = 0.992            # 🏞️ Multiplicador inferior para doble toque (precio apenas por debajo del mínimo anterior).
+
+# --- Ventas ---
+REJECT_UPPER_ATR_MULT = 0.9     # 🚩 Multiplicador de ATR para detectar mecha superior grande (rechazo en zona alta).
+REJECT_WICK_BODY_RATIO = 1.2    # 🚩 Relación mecha/cuerpo para identificar rechazo fuerte.
+SELL_RSI_PEAK = 70              # 🚩 RSI mínimo para vender en pico (sobrecompra).
+SELL_RSI_REJECT = 60            # 🚩 RSI mínimo para vender por rechazo en zona alta.
+SELL_RSI_HH_EMA = 62            # 🚩 RSI mínimo para vender tras ruptura de EMA8 en máximos.
+SELL_RSI_WICK = 61              # 🚩 RSI mínimo para vender por mecha superior grande.
+
+# --- Crash-guard ---
+CRASH_FAST_DROP_EMA8 = 0.992    # ⚡ Multiplicador para detectar caída rápida bajo EMA8 (protección ante crashes).
+CRASH_FAST_DROP_PCT1 = -0.7     # ⚡ Caída máxima (-0.7%) en 1 vela para crash-guard.
+CRASH_ATR_BREAK_MULT = 1.6      # ⚡ Multiplicador de ATR para detectar ruptura fuerte bajo EMA.
+CRASH_ADX_MIN = 22              # ⚡ ADX mínimo para considerar crash (tendencia fuerte bajista).
+CRASH_RSI_MAX = 48              # ⚡ RSI máximo para crash (sobreventa fuerte).
+
+# --- Timeframe y arranque ---
+TIMEFRAME = '5m'                # ⏰ Timeframe de operación (5 minutos por vela).
+STARTUP_CANDLES = 100           # ⏰ Número de velas iniciales requeridas para calcular indicadores.
+
+# --- Bollinger config ---
+BB40_WINDOW = 40                # 📊 Ventana de 40 velas para Bollinger Bands largas (BinHV45).
+BB40_STDS = 2                   # 📊 Desviaciones estándar para BB40.
+BB20_WINDOW = 20                # 📊 Ventana de 20 velas para Bollinger Bands cortas.
+BB20_STDS = 2                   # 📊 Desviaciones estándar para BB20.
+
+"""
