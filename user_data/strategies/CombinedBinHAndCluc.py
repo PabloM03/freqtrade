@@ -13,12 +13,12 @@ from freqtrade.persistence import Trade
 # 📌 PARÁMETROS GLOBALES AJUSTABLES
 # ==========================
 # --- Costes y ganancias mínimas ---
-FEE_RATE = 0.01                 # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
+FEE_RATE = 0.001                 # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
 SLIPPAGE_BUFFER = 0.0006        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes. Rango típico: 0.0002-0.001. Subirlo exige más beneficio antes de vender.
 MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento. Rango típico: 0.002-0.004. Subirlo exige más beneficio antes de vender.
 PEAK_MIN_PROFIT = 0.004         # 🏔️ Beneficio mínimo para permitir salida en pico óptimo (máximos locales). Rango típico: 0.004-0.01. Subirlo hace más exigente la venta en picos.
 HH_EMA_MIN_PROFIT = 0.0085      # 📊 Beneficio mínimo para salida por ruptura de EMA8 tras un máximo. Rango típico: 0.006-0.012. Subirlo hace más difícil vender tras máximos.
-HARD_TP = 0.55                  # 🎯 Take profit fijo para asegurar ganancias si se alcanza. Rango típico: 0.01-0.03. Subirlo busca ganancias mayores pero puede perder retrocesos.
+HARD_TP = 0.055                  # 🎯 Take profit fijo para asegurar ganancias si se alcanza. Rango típico: 0.01-0.03. Subirlo busca ganancias mayores pero puede perder retrocesos.
 
 # --- Stoploss y trailing ---
 STOPLOSS_ABS = -0.05            # 🛑 Stoploss absoluto para limitar pérdidas máximas por operación. Rango típico: -0.03 a -0.08. Subirlo (menos negativo) reduce pérdidas pero puede saltar antes.
@@ -78,7 +78,7 @@ SELL_RSI_WICK = 58              # 🚩 RSI mínimo para vender por mecha superio
 # --- Crash-guard ---
 CRASH_FAST_DROP_EMA8 = 0.99     # ⚡ Multiplicador para detectar caída rápida bajo EMA8. Rango típico: 0.99-0.995. Bajarlo detecta caídas más leves.
 CRASH_FAST_DROP_PCT1 = -0.6     # ⚡ Caída máxima en 1 vela para crash-guard. Rango típico: -0.5 a -1.0. Bajarlo detecta caídas más leves.
-CRASH_ATR_BREAK_MULT = 1.6.2    # ⚡ Multiplicador de ATR para detectar ruptura fuerte bajo EMA. Rango típico: 1.3-2.0. Subirlo exige rupturas más grandes.
+CRASH_ATR_BREAK_MULT = 1.62    # ⚡ Multiplicador de ATR para detectar ruptura fuerte bajo EMA. Rango típico: 1.3-2.0. Subirlo exige rupturas más grandes.
 CRASH_ADX_MIN = 22              # ⚡ ADX mínimo para considerar crash. Rango típico: 18-28. Subirlo exige tendencia bajista más fuerte.
 CRASH_RSI_MAX = 49              # ⚡ RSI máximo para crash. Rango típico: 45-52. Subirlo permite crash-guard con menos sobreventa.
 
@@ -89,7 +89,7 @@ STARTUP_CANDLES = 125           # ⏰ Número de velas iniciales requeridas para
 # --- Bollinger config ---
 BB40_WINDOW = 45                # 📊 Ventana de velas para Bollinger Bands largas. Rango típico: 30-60. Subirlo suaviza las bandas.
 BB40_STDS = 1.65                # 📊 Desviaciones estándar para BB40. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
-BB20_WINDOW = 18.5              # 📊 Ventana de velas para Bollinger Bands cortas. Rango típico: 15-30. Subirlo suaviza las bandas.
+BB20_WINDOW = 19              # 📊 Ventana de velas para Bollinger Bands cortas. Rango típico: 15-30. Subirlo suaviza las bandas.
 BB20_STDS = 2.2                 # 📊 Desviaciones estándar para BB20. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
 
 
@@ -434,7 +434,7 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         # Crash guard
         if self._crash_incoming(pair):
-            if current_profit is None or current_profit > self.MIN_PROFIT_NET:
+            if current_profit is None and current_profit > self.MIN_PROFIT_NET:
                 return "crash_guard"
 
         bars = self._bars_elapsed(trade, current_time)
