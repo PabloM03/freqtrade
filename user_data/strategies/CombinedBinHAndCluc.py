@@ -16,7 +16,7 @@ from freqtrade.persistence import Trade
 FEE_RATE = 0.001                # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
 SLIPPAGE_BUFFER = 0.0005        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes. Rango típico: 0.0002-0.001. Subirlo exige más beneficio antes de vender.
 MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento. Rango típico: 0.002-0.004. Subirlo exige más beneficio antes de vender.
-PEAK_MIN_PROFIT = 0.006         # 🏔️ Beneficio mínimo para permitir salida en pico óptimo (máximos locales). Rango típico: 0.004-0.01. Subirlo hace más exigente la venta en picos.
+PEAK_MIN_PROFIT = 0.007         # 🏔️ Beneficio mínimo para permitir salida en pico óptimo (máximos locales). Rango típico: 0.004-0.01. Subirlo hace más exigente la venta en picos.
 HH_EMA_MIN_PROFIT = 0.0085      # 📊 Beneficio mínimo para salida por ruptura de EMA8 tras un máximo. Rango típico: 0.006-0.012. Subirlo hace más difícil vender tras máximos.
 HARD_TP = 0.055                 # 🎯 Take profit fijo para asegurar ganancias si se alcanza. Rango típico: 0.01-0.03. Subirlo busca ganancias mayores pero puede perder retrocesos.
 
@@ -434,7 +434,7 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         # Crash guard
         if self._crash_incoming(pair):
-            if current_profit is None or current_profit > self.MIN_PROFIT_NET:
+            if current_profit is None and current_profit > self.MIN_PROFIT_NET:
                 return "crash_guard"
 
         bars = self._bars_elapsed(trade, current_time)
