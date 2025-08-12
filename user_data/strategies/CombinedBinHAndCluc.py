@@ -92,6 +92,18 @@ BB40_STDS = 1.65                # 📊 Desviaciones estándar para BB40. Rango t
 BB20_WINDOW = 19              # 📊 Ventana de velas para Bollinger Bands cortas. Rango típico: 15-30. Subirlo suaviza las bandas.
 BB20_STDS = 2.2                 # 📊 Desviaciones estándar para BB20. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
 
+# --- Anti-chase (evitar compras en subidas/picos) ---
+MAX_PCT_UP_1 = 0.8              # % máx. subida en 1 vela para permitir compra (usa misma escala que PCT1_MIN: en %)
+MAX_PCT_UP_3 = 2.2              # % máx. subida en 3 velas para permitir compra
+MAX_GREEN_STREAK = 3            # nº máx. de velas verdes recientes; si hay racha >= N, no comprar
+BUY_BELOW_EMA20_MULT = 0.998    # exigir que el precio esté por DEBAJO de EMA20 (0.998 = -0.2%)
+BUY_BELOW_BB_MID_MULT = 0.995   # exigir que el precio esté por DEBAJO de la banda media BB
+BB_EXPANDING_HIGH = 0.55        # si bb_percent >= 0.55 y bb_expanding, no comprar (expansión arriba)
+PUMP_VOL_MULT = 1.7             # volumen de la vela > 1.7x media rápida => posible pump (bloquear)
+NEAR_HH_DISTANCE = 0.003        # no comprar si el precio está a <0.3% del máximo 20 velas
+REQUIRE_RED_PULLBACK = True     # exigir una “pausa” (pullback leve) antes de permitir compra tras subidón
+
+
 
 def bollinger_bands(stock_price, window_size, num_of_std):
     rolling_mean = stock_price.rolling(window=window_size).mean()
@@ -270,6 +282,18 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['low'] <= dataframe['low'].shift(2))
         )
 
+        # Anti-chase helpers
+        dataframe['green'] = dataframe['close'] > dataframe['open']
+        dataframe['green_streak'] = (
+            dataframe['green']
+            .rolling(window=MAX_GREEN_STREAK, min_periods=1)
+            .sum()
+        )
+        dataframe['vol_mean_fast'] = dataframe['volume'].rolling(window=10).mean()
+        dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
+        dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
+
+
         return dataframe
 
     # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
@@ -297,6 +321,33 @@ class CombinedBinHAndCluc(IStrategy):
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > self.LOWER_WICK_BODY_RATIO * body
+
+        
+        # Bloqueo de compras en subidas/picos (anti-chase)
+        anti_chase = (
+            # No perseguir velas verdes muy fuertes (1 y 3 velas)
+            (dataframe['pct_1'] < MAX_PCT_UP_1) &
+            (dataframe['pct_3'] < MAX_PCT_UP_3) &
+            # Evitar rachas de verdes consecutivas
+            (dataframe['green_streak'] < MAX_GREEN_STREAK) &
+            # Evitar compras arriba con bandas expandiéndose
+            (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & (dataframe['bb_expanding']))) &
+            # Evitar compras en pumps de volumen + vela verde fuerte
+            (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
+            # Exigir estar por debajo de referencias medias
+            (dataframe['close'] <= dataframe['ema_fast'] * BUY_BELOW_EMA20_MULT) &
+            (dataframe['close'] <= dataframe['bb_middleband'] * BUY_BELOW_BB_MID_MULT) &
+            # Evitar compras pegadas a los máximos recientes
+            (~dataframe['near_hh'])
+        )
+
+        if REQUIRE_RED_PULLBACK:
+            anti_chase = anti_chase & (
+                # pequeña pausa: vela roja o al menos barrido de mínimos vs cierre previo
+                (dataframe['close'] <= dataframe['open']) |
+                (dataframe['low'] < dataframe['close'].shift(1))
+            )
+
 
         # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)
         A = (
@@ -354,7 +405,7 @@ class CombinedBinHAndCluc(IStrategy):
         )
 
         dataframe.loc[
-            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high) | D),  # D (capitulación) siempre permitida
+            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D),
             'buy'
         ] = 1
         return dataframe
