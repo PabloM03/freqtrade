@@ -1,4 +1,3 @@
-# --- Do not remove these libs ---
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import numpy as np
 # --------------------------------
@@ -435,7 +434,7 @@ class CombinedBinHAndCluc(IStrategy):
     ) -> Optional[str]:
         # Crash guard
         if self._crash_incoming(pair):
-            if current_profit is None or current_profit > -0.01:
+            if current_profit is None or current_profit > self.MIN_PROFIT_NET:
                 return "crash_guard"
 
         bars = self._bars_elapsed(trade, current_time)
