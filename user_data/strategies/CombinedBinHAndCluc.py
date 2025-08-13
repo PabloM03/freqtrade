@@ -10,7 +10,7 @@ from typing import Optional
 from freqtrade.persistence import Trade
 
 # ==========================
-# 📌 PARÁMETROS GLOBALES AJUSTABLES
+# 📌 PARÁMETROS GLOBALES AJUSTABLES 
 # ==========================
 # --- Costes y ganancias mínimas ---
 FEE_RATE = 0.001                # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
