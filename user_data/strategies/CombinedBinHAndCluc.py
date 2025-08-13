@@ -12,7 +12,7 @@ from freqtrade.persistence import Trade
 # ==========================
 # 📌 PARÁMETROS GLOBALES AJUSTABLES
 # ==========================
-# --- Costes y ganancias mínimas ---
+# --- Costes y ganancias mínimas --- 
 FEE_RATE = 0.001                # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
 SLIPPAGE_BUFFER = 0.0006        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes. Rango típico: 0.0002-0.001. Subirlo exige más beneficio antes de vender.
 MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento. Rango típico: 0.002-0.004. Subirlo exige más beneficio antes de vender.
