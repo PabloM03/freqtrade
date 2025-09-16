@@ -8,7 +8,7 @@ from pandas import DataFrame
 from datetime import datetime
 from typing import Optional
 from freqtrade.persistence import Trade
-
+ 
 # ==========================
 # 📌 PARÁMETROS GLOBALES AJUSTABLES 
 # ==========================
