@@ -28,10 +28,12 @@ test -f "$BASE/user_data/hyperoptloss/my_balanced_loss.py" || {
   echo "[retrain] AVISO: no veo user_data/hyperoptloss/my_balanced_loss.py (usando MyBalancedLoss)."
 }
 
+
 echo "[retrain] descargando datos..."
 freqtrade download-data -t "$TF" --days 200
 
 echo "[retrain] lanzando hyperopt (TPE)..."
+
 freqtrade hyperopt \
   -s "$STRAT" \
   -c "$CONF" \
@@ -44,6 +46,7 @@ freqtrade hyperopt \
   --no-color
 
 # Normaliza el JSON (algunas versiones exportan {"params":{...}})
+
 if jq -e 'has("params")' "$BEST_TMP" >/dev/null; then
   jq '.params' "$BEST_TMP" > "$BEST_TMP.norm"
 else
@@ -63,6 +66,7 @@ if [[ -f "$OPS/params.json" ]] && cmp -s "$BEST_TMP.norm" "$OPS/params.json"; th
 fi
 
 # Despliegue atómico
+
 echo "[retrain] desplegando nuevos parámetros..."
 install -m 0644 "$BEST_TMP.norm" "$OPS/params.json.new"
 mv -f "$OPS/params.json.new" "$OPS/params.json"
@@ -72,6 +76,9 @@ echo "[retrain] reiniciando servicio freqtrade..."
 sudo systemctl restart freqtrade
 
 echo "[retrain] ok. mejores parámetros aplicados."
+
 # housekeeping: borra resultados/historicos viejos
 find "$BASE/user_data/hyperopt_results" -type f -mtime +30 -delete || true
 find "$BASE/user_data/logs"            -type f -mtime +14 -delete || true
+
+

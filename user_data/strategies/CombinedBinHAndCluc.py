@@ -5,6 +5,7 @@
 # - Convierte “constantes” a parámetros optimizables mediante un shim de @property.
 # - Lanza hyperopt con: freqtrade hyperopt --spaces buy sell stoploss trailing protection ...
 
+
 from datetime import datetime
 from typing import Optional
 
@@ -32,6 +33,7 @@ SLIPPAGE_BUFFER = 0.0004
 MIN_PROFIT_NET = 3 * FEE_RATE + SLIPPAGE_BUFFER   # ~0.0034 (0.34% neto mínimo)
 
 def bollinger_bands(series, window_size: int, num_of_std: float):
+
     mean = series.rolling(window=window_size).mean()
     std = series.rolling(window=window_size).std()
     lower = mean - (std * num_of_std)
@@ -56,6 +58,7 @@ class CombinedBinHAndCluc(IStrategy):
     use_exit_signal = False
     exit_profit_only = True
     ignore_roi_if_entry_signal = False
+
 
     trailing_stop = False
     minimal_roi = {"0": 0.0}
@@ -146,6 +149,7 @@ class CombinedBinHAndCluc(IStrategy):
     # Backing para stoploss normalizado por StrategyResolver
     _stoploss_cache: Optional[float] = None
 
+
     # Take-profits
     @property
     def PEAK_MIN_PROFIT(self):    return float(self.h_peak_min_profit.value)
@@ -175,6 +179,7 @@ class CombinedBinHAndCluc(IStrategy):
             self._stoploss_cache = float(value)
         except Exception:
             self._stoploss_cache = None
+
 
     @property
     def TRAIL_ATR_MULT_LOW(self):     return float(self.h_trail_atr_low.value)
