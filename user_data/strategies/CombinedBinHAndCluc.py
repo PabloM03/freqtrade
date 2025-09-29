@@ -1,9 +1,10 @@
-# filename: combined_binh_and_cluc.py
+# filename: CombinedBinHAndCluc.py
 # -*- coding: utf-8 -*-
 
 # Estrategia Freqtrade lista para Hyperopt (TPE) sin reescribir tu lógica.
-# - Convierte los “constantes” a parámetros optimizables mediante un shim de @property.
-# - Puedes lanzar: freqtrade hyperopt --spaces buy sell stoploss trailing protection ...
+# - Convierte “constantes” a parámetros optimizables mediante un shim de @property.
+# - Lanza hyperopt con: freqtrade hyperopt --spaces buy sell stoploss trailing protection ...
+
 
 from datetime import datetime
 from typing import Optional
@@ -20,18 +21,19 @@ from freqtrade.strategy import (
     IntParameter,
     DecimalParameter,
     BooleanParameter,
-    CategoricalParameter,  # (no usado, pero disponible por si lo añades)
+    CategoricalParameter,  # (no usado ahora, disponible si lo añades)
 )
 
 # ==========================
-# 📌 PARÁMETROS GLOBALES (no-optimizable por Hyperopt)
+# 📌 PARÁMETROS GLOBALES (no optimizables por Hyperopt)
 # ==========================
-# Costes/gastos mínimos (solo usados para calcular MIN_PROFIT_NET en exits)
+# Costes mínimos (solo para calcular MIN_PROFIT_NET en exits)
 FEE_RATE = 0.001
 SLIPPAGE_BUFFER = 0.0004
-MIN_PROFIT_NET = 3 * FEE_RATE + SLIPPAGE_BUFFER   # ~0.0034 (0.34%)
+MIN_PROFIT_NET = 3 * FEE_RATE + SLIPPAGE_BUFFER   # ~0.0034 (0.34% neto mínimo)
 
-def bollinger_bands(series: DataFrame, window_size: int, num_of_std: float):
+def bollinger_bands(series, window_size: int, num_of_std: float):
+
     mean = series.rolling(window=window_size).mean()
     std = series.rolling(window=window_size).std()
     lower = mean - (std * num_of_std)
@@ -40,7 +42,7 @@ def bollinger_bands(series: DataFrame, window_size: int, num_of_std: float):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    Compras: bajadas/pullbacks óptimos (vales locales claros + capitulación/giro)
+    Compras: bajadas/pullbacks óptimos (vales locales + capitulación/giro)
     Ventas : picos locales con rechazo/giro (mechas, ruptura EMA8, MACD debilitando)
     Protección: crash-guard y trailing por ATR moderado.
     """
@@ -50,13 +52,20 @@ class CombinedBinHAndCluc(IStrategy):
     # ==========================
     timeframe = '5m'
     startup_candle_count = 125
+    process_only_new_candles = True
 
-    use_sell_signal = False
-    sell_profit_only = True
-    ignore_roi_if_buy_signal = False
+    # (Usa los nombres nuevos para evitar warnings deprecados)
+    use_exit_signal = False
+    exit_profit_only = True
+    ignore_roi_if_entry_signal = False
+
+
     trailing_stop = False
     minimal_roi = {"0": 0.0}
     MIN_HOLD_BARS = 1  # no vender instantáneamente tras entrar
+
+    # Habilitar custom_stoploss (por defecto es False si no lo marcas)
+    use_custom_stoploss = True
 
     # Parámetros fijos auxiliares (puedes moverlos a Hyperopt si quieres)
     ADX_STRONG_TREND = 24
@@ -137,6 +146,9 @@ class CombinedBinHAndCluc(IStrategy):
     h_require_red_pb     = BooleanParameter(default=False, space='buy')
 
     # ---------- SHIM de propiedades (tu lógica usa self.* como siempre) ----------
+    # Backing para stoploss normalizado por StrategyResolver
+    _stoploss_cache: Optional[float] = None
+
 
     # Take-profits
     @property
@@ -148,7 +160,27 @@ class CombinedBinHAndCluc(IStrategy):
 
     # Stop/Trailing
     @property
-    def stoploss(self):               return float(self.h_stoploss_abs.value)
+    def stoploss(self) -> float:
+        # 1) Si existe el parámetro optimizable, úsalo
+        try:
+            return float(self.h_stoploss_abs.value)
+        except Exception:
+            pass
+        # 2) Si StrategyResolver asignó algo (normalize_attributes), úsalo
+        if self._stoploss_cache is not None:
+            return float(self._stoploss_cache)
+        # 3) Fallback razonable
+        return -0.045
+
+    @stoploss.setter
+    def stoploss(self, value: float) -> None:
+        # Freqtrade hace: strategy.stoploss = float(strategy.stoploss)
+        try:
+            self._stoploss_cache = float(value)
+        except Exception:
+            self._stoploss_cache = None
+
+
     @property
     def TRAIL_ATR_MULT_LOW(self):     return float(self.h_trail_atr_low.value)
     @property
