@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE="/home/ubuntu/freqtrade"
+CONF="$BASE/config.json"
+MERGED="$BASE/ops/config.withparams.json"
+
+CFG="$CONF"
+if [[ -s "$MERGED" ]] && jq -e . "$MERGED" >/dev/null 2>&1; then
+  echo "[trade] usando $MERGED"
+  CFG="$MERGED"
+else
+  echo "[trade] usando $CONF"
+fi
+
+exec freqtrade trade -c "$CFG"
