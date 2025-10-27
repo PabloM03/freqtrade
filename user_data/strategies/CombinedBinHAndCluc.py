@@ -1,7 +1,7 @@
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import numpy as np
-# --------------------------------
 import talib.abstract as ta
+
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.strategy import stoploss_from_open
 from pandas import DataFrame
@@ -9,100 +9,99 @@ from datetime import datetime
 from typing import Optional
 from freqtrade.persistence import Trade
 
+
 # ==========================
 # 📌 PARÁMETROS GLOBALES AJUSTABLES
 # ==========================
 # --- Costes y ganancias mínimas ---
-FEE_RATE = 0.001                # 💸 Comisión por operación. Se usa para calcular beneficios netos y evitar operar con ganancias insuficientes. Rango típico: 0.0005-0.002. Subirlo reduce operaciones pequeñas.
-SLIPPAGE_BUFFER = 0.0006        # 🏃 Margen extra para cubrir deslizamiento en la ejecución de órdenes. Rango típico: 0.0002-0.001. Subirlo exige más beneficio antes de vender.
-MIN_PROFIT_NET = 6 * FEE_RATE + SLIPPAGE_BUFFER  # 📈 Beneficio neto mínimo requerido para vender, considerando comisiones y deslizamiento. Rango típico: 0.002-0.004. Subirlo exige más beneficio antes de vender.
-PEAK_MIN_PROFIT = 0.010         # 🏔️ Beneficio mínimo para permitir salida en pico óptimo (máximos locales). Rango típico: 0.004-0.01. Subirlo hace más exigente la venta en picos.
-HH_EMA_MIN_PROFIT = 0.013       # 📊 Beneficio mínimo para salida por ruptura de EMA8 tras un máximo. Rango típico: 0.006-0.012. Subirlo hace más difícil vender tras máximos.
-HARD_TP = 0.035                 # 🎯 Take profit fijo para asegurar ganancias si se alcanza. Rango típico: 0.01-0.03. Subirlo busca ganancias mayores pero puede perder retrocesos.
+FEE_RATE = 0.001
+SLIPPAGE_BUFFER = 0.0006
+MIN_PROFIT_NET = 6 * FEE_RATE + SLIPPAGE_BUFFER  # ~0.0066
+PEAK_MIN_PROFIT = 0.010
+HH_EMA_MIN_PROFIT = 0.013
+HARD_TP = 0.035
 
 # --- Stoploss y trailing ---
-STOPLOSS_ABS = -0.060           # 🛑 Stoploss absoluto para limitar pérdidas máximas por operación. Rango típico: -0.03 a -0.08. Subirlo (menos negativo) reduce pérdidas pero puede saltar antes.
-TRAIL_ATR_MULT_LOW = 2.2        # 🐢 Multiplicador de ATR para trailing stop si beneficio bajo (stop más ajustado). Rango típico: 1.5-2.5. Subirlo aleja el trailing stop.
-TRAIL_ATR_MULT_HIGH = 3.4       # 🦅 Multiplicador de ATR para trailing stop si beneficio alto (stop más holgado). Rango típico: 2.0-3.0. Subirlo aleja el trailing stop en beneficios altos.
-TRAIL_DIST_MIN = 0.020          # 📏 Distancia mínima para trailing stop, evita stops demasiado ajustados. Rango típico: 0.01-0.02. Subirlo da más margen antes de saltar el stop.
-TRAIL_DIST_MAX = 0.060          # 📏 Distancia máxima para trailing stop, evita stops demasiado lejanos. Rango típico: 0.025-0.04. Subirlo permite stops más lejanos.
-TRAIL_VERTICAL_MIN = 0.028      # 🚀 Distancia mínima para trailing si hay rally vertical. Rango típico: 0.015-0.03. Subirlo da más margen en subidas rápidas.
-ADX_STRONG_TREND = 27           # 💪 Valor mínimo de ADX para considerar tendencia fuerte (mayor protección trailing). Rango típico: 20-35. Subirlo exige tendencia más fuerte para trailing holgado.
-ROC5_VERTICAL = 3.5             # 📈 ROC5 mínimo para considerar rally vertical. Rango típico: 2-5. Subirlo exige movimientos más bruscos para activar trailing vertical.
-FALLBACK_TRAIL_DIST = 0.024     # 🛟 Distancia fallback si falla el cálculo de trailing dinámico. Rango típico: 0.012-0.025. Subirlo da más margen de seguridad.
+STOPLOSS_ABS = -0.060
+TRAIL_ATR_MULT_LOW = 2.2
+TRAIL_ATR_MULT_HIGH = 3.4
+TRAIL_DIST_MIN = 0.020
+TRAIL_DIST_MAX = 0.060
+TRAIL_VERTICAL_MIN = 0.028
+ADX_STRONG_TREND = 27
+ROC5_VERTICAL = 3.5
+FALLBACK_TRAIL_DIST = 0.024
 
 # --- Anti-cuchillo ---
-PCT1_MIN = -2.5                 # 🔪 Caída máxima en 1 vela para permitir compra (evita comprar en caídas bruscas). Rango típico: -1.0 a -2.0. Bajarlo permite compras en caídas más fuertes.
-PCT3_MIN = -5.5                 # 🔪 Caída máxima en 3 velas para permitir compra (protege de tendencias bajistas fuertes). Rango típico: -2.0 a -4.0. Bajarlo permite compras en tendencias más bajistas.
-COOLDOWN_BARS = 3               # 🧊 Número de velas de enfriamiento tras una vela roja grande. Rango típico: 2-6. Subirlo aumenta el tiempo sin comprar tras caídas fuertes.
+PCT1_MIN = -2.5
+PCT3_MIN = -5.5
+COOLDOWN_BARS = 3
 
 # --- Filtro de compras altas ---
-NO_BUY_BB_MULT = 1.000          # 🚫 Multiplicador de la banda media BB para evitar compras "arriba". Rango típico: 1.01-1.15. Subirlo permite comprar más alto.
-NO_BUY_EMA20_MULT = 1.000       # 🚫 Multiplicador de EMA20 para evitar compras "arriba". Rango típico: 1.0-1.05. Subirlo permite comprar más alto.
-NO_BUY_RSI_MIN = 55             # 🚫 RSI mínimo para evitar compras en sobrecompra. Rango típico: 55-65. Subirlo evita compras en zonas más sobrecompradas.
+NO_BUY_BB_MULT = 1.000
+NO_BUY_EMA20_MULT = 1.000
+NO_BUY_RSI_MIN = 55
 
 # --- Zonas de valor para comprar ---
-DEEP_BB = 0.16                  # 🏦 Profundidad máxima de BB% para considerar compra en zona muy baja. Rango típico: 0.15-0.25. Subirlo permite compras menos profundas.
-BB_ZONE_OK = 0.33               # 🏦 BB% máximo para considerar zona de compra aceptable. Rango típico: 0.3-0.45. Subirlo permite compras en zonas menos bajas.
-LOWER_WICK_BODY_RATIO = 1.30    # 🕯️ Relación mecha inferior/cuerpo para identificar velas tipo martillo. Rango típico: 1.1-1.3. Subirlo exige mechas más largas para considerar giro.
+DEEP_BB = 0.16
+BB_ZONE_OK = 0.33
+LOWER_WICK_BODY_RATIO = 1.30
 
 # --- Reglas de compra específicas ---
 # A) Mínimo local
-A_LL10_MULT = 1.0035            # 📉 Multiplicador para comparar el mínimo local con el mínimo de las últimas 10 velas. Rango típico: 1.002-1.01. Subirlo exige mínimos más bajos para detectar valle.
-A_RSI_PREV_MAX = 46             # 📉 RSI máximo previo para permitir compra en giro alcista tras sobreventa. Rango típico: 40-50. Subirlo permite compras con menos sobreventa previa.
-# B) Re-entrada tras BB baja -> usa BB_ZONE_OK
+A_LL10_MULT = 1.0035
+A_RSI_PREV_MAX = 46
 # C) StochRSI en sobreventa
-C_STOCH_MAX = 25                # 📉 Valor máximo de StochRSI para considerar sobreventa y posible rebote. Rango típico: 30-40. Subirlo permite compras con menos sobreventa.
+C_STOCH_MAX = 25
 # D) Capitulación
-D_PCT1_MAX = -2.2               # 💥 Caída máxima en 1 vela para detectar capitulación. Rango típico: -1.5 a -2.5. Bajarlo detecta capitulaciones más bruscas.
-D_PCT3_MAX = -4.8               # 💥 Caída máxima en 3 velas para detectar capitulación. Rango típico: -3.0 a -5.0. Bajarlo detecta caídas más fuertes.
-D_BB_PERCENT_MAX = 0.04         # 💥 BB% máximo para capitulación (muy cerca de la banda inferior). Rango típico: 0.03-0.08. Subirlo permite capitulación menos extrema.
-D_TAIL_ATR_MULT = 1.25          # 💥 Multiplicador de ATR para la cola de la vela (mecha larga indica rebote). Rango típico: 0.8-1.5. Subirlo exige mechas más largas.
+D_PCT1_MAX = -2.2
+D_PCT3_MAX = -4.8
+D_BB_PERCENT_MAX = 0.04
+D_TAIL_ATR_MULT = 1.25
 # E) Pullback a EMA8
-E_RSI_MIN = 44                  # 🔄 RSI mínimo para permitir pullback alcista. Rango típico: 40-50. Subirlo exige más fuerza en el rebote.
-E_LL10_MULT = 1.006             # 🔄 Multiplicador para comparar el mínimo con el mínimo de 10 velas. Rango típico: 1.005-1.02. Subirlo exige mínimos más bajos.
-E_BB_MID_MULT = 0.996           # 🔄 Multiplicador para comparar el precio con la banda media BB. Rango típico: 1.005-1.02. Subirlo exige precios más bajos respecto a la banda media.
+E_RSI_MIN = 44
+E_LL10_MULT = 1.006
+E_BB_MID_MULT = 0.996
 # F) Doble toque en valle
-F_BB_PERCENT_MAX = 0.28         # 🏞️ BB% máximo para doble toque en valle. Rango típico: 0.25-0.35. Subirlo permite doble toque en zonas menos bajas.
-F_LL10_UPPER = 1.004            # 🏞️ Multiplicador superior para doble toque. Rango típico: 1.002-1.01. Subirlo permite más diferencia entre toques.
-F_LL10_LOWER = 0.992            # 🏞️ Multiplicador inferior para doble toque. Rango típico: 0.98-0.995. Bajarlo permite más diferencia entre toques.
+F_BB_PERCENT_MAX = 0.28
+F_LL10_UPPER = 1.004
+F_LL10_LOWER = 0.992
 
 # --- Ventas ---
-REJECT_UPPER_ATR_MULT = 1.00    # 🚩 Multiplicador de ATR para detectar mecha superior grande. Rango típico: 0.8-1.2. Subirlo exige mechas más largas para vender.
-REJECT_WICK_BODY_RATIO = 1.25   # 🚩 Relación mecha/cuerpo para identificar rechazo fuerte. Rango típico: 1.1-1.4. Subirlo exige mechas más largas respecto al cuerpo.
-SELL_RSI_PEAK = 72              # 🚩 RSI mínimo para vender en pico. Rango típico: 65-75. Subirlo exige sobrecompra más fuerte.
-SELL_RSI_REJECT = 66            # 🚩 RSI mínimo para vender por rechazo en zona alta. Rango típico: 55-65. Subirlo exige más sobrecompra para vender por rechazo.
-SELL_RSI_HH_EMA = 65            # 🚩 RSI mínimo para vender tras ruptura de EMA8 en máximos. Rango típico: 58-65. Subirlo exige más sobrecompra.
-SELL_RSI_WICK = 66              # 🚩 RSI mínimo para vender por mecha superior grande. Rango típico: 58-65. Subirlo exige más sobrecompra.
+REJECT_UPPER_ATR_MULT = 1.00
+REJECT_WICK_BODY_RATIO = 1.25
+SELL_RSI_PEAK = 72
+SELL_RSI_REJECT = 66
+SELL_RSI_HH_EMA = 65
+SELL_RSI_WICK = 66
 
 # --- Crash-guard ---
-CRASH_FAST_DROP_EMA8 = 0.988    # ⚡ Multiplicador para detectar caída rápida bajo EMA8. Rango típico: 0.99-0.995. Bajarlo detecta caídas más leves.
-CRASH_FAST_DROP_PCT1 = -1.0     # ⚡ Caída máxima en 1 vela para crash-guard. Rango típico: -0.5 a -1.0. Bajarlo detecta caídas más leves.
-CRASH_ATR_BREAK_MULT = 1.6      # ⚡ Multiplicador de ATR para detectar ruptura fuerte bajo EMA. Rango típico: 1.3-2.0. Subirlo exige rupturas más grandes.
-CRASH_ADX_MIN = 26              # ⚡ ADX mínimo para considerar crash. Rango típico: 18-28. Subirlo exige tendencia bajista más fuerte.
-CRASH_RSI_MAX = 50              # ⚡ RSI máximo para crash. Rango típico: 45-52. Subirlo permite crash-guard con menos sobreventa.
+CRASH_FAST_DROP_EMA8 = 0.988
+CRASH_FAST_DROP_PCT1 = -1.0
+CRASH_ATR_BREAK_MULT = 1.6
+CRASH_ADX_MIN = 26
+CRASH_RSI_MAX = 50
 
 # --- Timeframe y arranque ---
-TIMEFRAME = '5m'                # ⏰ Timeframe de operación. Rango típico: '1m', '5m', '15m'. Cambiarlo afecta la frecuencia y sensibilidad de señales.
-STARTUP_CANDLES = 130           # ⏰ Número de velas iniciales requeridas para calcular indicadores. Rango típico: 50-150. Subirlo mejora precisión de indicadores largos.
+TIMEFRAME = '5m'
+STARTUP_CANDLES = 130
 
 # --- Bollinger config ---
-BB40_WINDOW = 40                # 📊 Ventana de velas para Bollinger Bands largas. Rango típico: 30-60. Subirlo suaviza las bandas.
-BB40_STDS = 2.2                 # 📊 Desviaciones estándar para BB40. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
-BB20_WINDOW = 20                # 📊 Ventana de velas para Bollinger Bands cortas. Rango típico: 15-30. Subirlo suaviza las bandas.
-BB20_STDS = 2.2                 # 📊 Desviaciones estándar para BB20. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
+BB40_WINDOW = 40
+BB40_STDS = 2.2
+BB20_WINDOW = 20
+BB20_STDS = 2.2
 
 # --- Anti-chase (evitar compras en subidas/picos) ---
-MAX_PCT_UP_1 = 0.6              # % máx. subida en 1 vela para permitir compra (usa misma escala que PCT1_MIN: en %)
-MAX_PCT_UP_3 = 1.8              # % máx. subida en 3 velas para permitir compra
-MAX_GREEN_STREAK = 2            # nº máx. de velas verdes recientes; si hay racha >= N, no comprar
-BUY_BELOW_EMA20_MULT = 0.996    # exigir que el precio esté por DEBAJO de EMA20 (0.998 = -0.2%)
-BUY_BELOW_BB_MID_MULT = 0.996   # exigir que el precio esté por DEBAJO de la banda media BB
-BB_EXPANDING_HIGH = 0.50        # si bb_percent >= 0.55 y bb_expanding, no comprar (expansión arriba)
-PUMP_VOL_MULT = 2.2             # volumen de la vela > 1.7x media rápida => posible pump (bloquear)
-NEAR_HH_DISTANCE = 0.0150       # no comprar si el precio está a <0.3% del máximo 20 velas
-REQUIRE_RED_PULLBACK = True     # exigir una “pausa” (pullback leve) antes de permitir compra tras subidón
-
+MAX_PCT_UP_1 = 0.6       # %
+MAX_PCT_UP_3 = 1.8       # %
+MAX_GREEN_STREAK = 2
+BUY_BELOW_EMA20_MULT = 0.996
+BUY_BELOW_BB_MID_MULT = 0.996
+BB_EXPANDING_HIGH = 0.50
+PUMP_VOL_MULT = 2.2
+NEAR_HH_DISTANCE = 0.0150
+REQUIRE_RED_PULLBACK = True
 
 
 def bollinger_bands(stock_price, window_size, num_of_std):
@@ -114,12 +113,11 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc(IStrategy):
     """
-    - Compras: en bajadas óptimas (mínimo local claro + capitulación/giro), no en mitad de subida.
-    - Ventas: en picos óptimos (máximo local claro + rechazo/giro).
-    - Crash-guard y trailing moderado.
+    Compras: en bajadas óptimas (mínimo local + capitulación/giro), evitando persecuciones.
+    Ventas: en picos y rechazos claros. Crash-guard y trailing dinámico moderado.
     """
 
-    # Mapea parámetros globales a atributos de clase para mantener self.*
+    # === Mapeo de parámetros globales ===
     FEE_RATE = FEE_RATE
     SLIPPAGE_BUFFER = SLIPPAGE_BUFFER
     MIN_PROFIT_NET = MIN_PROFIT_NET
@@ -127,15 +125,27 @@ class CombinedBinHAndCluc(IStrategy):
     HH_EMA_MIN_PROFIT = HH_EMA_MIN_PROFIT
     HARD_TP = HARD_TP
 
+    # --- Núcleo de estrategia (nombres actuales, sin deprecations) ---
     stoploss = STOPLOSS_ABS
     timeframe = TIMEFRAME
     startup_candle_count = STARTUP_CANDLES
 
-    use_sell_signal = False
-    sell_profit_only = True
-    ignore_roi_if_buy_signal = False
-    trailing_stop = False
-    minimal_roi = {"0": 0.0}
+    use_exit_signal = False                 # (antes use_sell_signal)
+    exit_profit_only = True                 # (antes sell_profit_only)
+    ignore_roi_if_entry_signal = False      # (antes ignore_roi_if_buy_signal)
+
+    # ROI realista (evita cierre instantáneo a 0%)
+    minimal_roi = {
+        "0": 0.03,      # 3% si se da rápido
+        "60": 0.01      # 1% tras 60 min
+    }
+
+    # Trailing (habilitado)
+    trailing_stop = True
+    trailing_stop_positive = 0.01
+    trailing_stop_positive_offset = 0.02
+    trailing_only_offset_is_reached = True
+
     MIN_HOLD_BARS = 1
 
     # Anti-cuchillo / filtros
@@ -181,7 +191,7 @@ class CombinedBinHAndCluc(IStrategy):
     CRASH_ADX_MIN = CRASH_ADX_MIN
     CRASH_RSI_MAX = CRASH_RSI_MAX
 
-    # Trailing
+    # Trailing dinámico
     TRAIL_ATR_MULT_LOW = TRAIL_ATR_MULT_LOW
     TRAIL_ATR_MULT_HIGH = TRAIL_ATR_MULT_HIGH
     TRAIL_DIST_MIN = TRAIL_DIST_MIN
@@ -270,7 +280,7 @@ class CombinedBinHAndCluc(IStrategy):
         # Volumen relativo
         dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * 1.15)
 
-        # Máximo/mínimo local reciente (ventanas cortas) para “picos/vales óptimos”
+        # Máximo/mínimo local reciente
         dataframe['loc_peak'] = (
             (dataframe['high'] >= dataframe['high'].rolling(6).max()) &
             (dataframe['high'] >= dataframe['high'].shift(1)) &
@@ -285,18 +295,15 @@ class CombinedBinHAndCluc(IStrategy):
         # Anti-chase helpers
         dataframe['green'] = dataframe['close'] > dataframe['open']
         dataframe['green_streak'] = (
-            dataframe['green']
-            .rolling(window=MAX_GREEN_STREAK, min_periods=1)
-            .sum()
+            dataframe['green'].rolling(window=MAX_GREEN_STREAK, min_periods=1).sum()
         )
         dataframe['vol_mean_fast'] = dataframe['volume'].rolling(window=10).mean()
         dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
         dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
 
-
         return dataframe
 
-    # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
+    # ---------------------- COMPRAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
             (dataframe['pct_1'] > self.PCT1_MIN) &
@@ -322,34 +329,24 @@ class CombinedBinHAndCluc(IStrategy):
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > self.LOWER_WICK_BODY_RATIO * body
 
-
-        # Bloqueo de compras en subidas/picos (anti-chase)
+        # Anti-chase (no perseguir subidones)
         anti_chase = (
-            # No perseguir velas verdes muy fuertes (1 y 3 velas)
             (dataframe['pct_1'] < MAX_PCT_UP_1) &
             (dataframe['pct_3'] < MAX_PCT_UP_3) &
-            # Evitar rachas de verdes consecutivas
             (dataframe['green_streak'] < MAX_GREEN_STREAK) &
-            # Evitar compras arriba con bandas expandiéndose
             (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & (dataframe['bb_expanding']))) &
-            # Evitar compras en pumps de volumen + vela verde fuerte
             (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
-            # Exigir estar por debajo de referencias medias
             (dataframe['close'] <= dataframe['ema_fast'] * BUY_BELOW_EMA20_MULT) &
             (dataframe['close'] <= dataframe['bb_middleband'] * BUY_BELOW_BB_MID_MULT) &
-            # Evitar compras pegadas a los máximos recientes
             (~dataframe['near_hh'])
         )
-
         if REQUIRE_RED_PULLBACK:
             anti_chase = anti_chase & (
-                # pequeña pausa: vela roja o al menos barrido de mínimos vs cierre previo
                 (dataframe['close'] <= dataframe['open']) |
                 (dataframe['low'] < dataframe['close'].shift(1))
             )
 
-
-        # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)
+        # A) Mínimo local + giro RSI + martillo/volumen
         A = (
             (dataframe['loc_trough']) &
             ((dataframe['low'] <= dataframe['ll_10'] * self.A_LL10_MULT) | deep_bb) &
@@ -358,7 +355,7 @@ class CombinedBinHAndCluc(IStrategy):
             (hammerish | dataframe['vol_spike'])
         )
 
-        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro (clásico y muy abajo)
+        # B) Re-entrada tras cerrar fuera de BB inferior y volver dentro
         B = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
@@ -366,7 +363,7 @@ class CombinedBinHAndCluc(IStrategy):
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + MACD no empeora + en zona baja BB
+        # C) StochRSI cruce en sobreventa + MACD no empeora + zona baja BB
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
@@ -375,7 +372,7 @@ class CombinedBinHAndCluc(IStrategy):
             (bb_zone_ok)
         )
 
-        # D) Capitulación: vela muy roja previa / colas largas + rebote verde
+        # D) Capitulación
         D = (
             ((dataframe['pct_1'] <= self.D_PCT1_MAX) | (dataframe['pct_3'] <= self.D_PCT3_MAX)) &
             (dataframe['bb_percent'] <= self.D_BB_PERCENT_MAX) &
@@ -383,7 +380,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # E) Pullback controlado a EMA8 ascendente en zona media-baja
+        # E) Pullback a EMA8 ascendente en zona media-baja
         E = (
             (dataframe['close'] > dataframe['ema8']) &
             (dataframe['close'].shift(1) <= dataframe['ema8'].shift(1)) &
@@ -395,7 +392,7 @@ class CombinedBinHAndCluc(IStrategy):
             (dataframe['vol_spike'] | hammerish)
         )
 
-        # F) Doble toque / higher-low sutil en zona baja (confirmación de valle)
+        # F) Doble toque en valle
         F = (
             (dataframe['bb_percent'] <= self.F_BB_PERCENT_MAX) &
             (dataframe['low'] <= dataframe['ll_10'] * self.F_LL10_UPPER) &
@@ -410,9 +407,8 @@ class CombinedBinHAndCluc(IStrategy):
         ] = 1
         return dataframe
 
-    # ---------------------- VENTAS (picos más óptimos) ----------------------
+    # ---------------------- VENTAS (señales, por si activas use_exit_signal=True) ----------------------
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Rechazo fuerte cerca de banda superior (mecha y RSI alto)
         reject_upper = (
             (dataframe['upper_wick'] >= dataframe['atr'] * self.REJECT_UPPER_ATR_MULT) &
             (dataframe['upper_wick'] > (dataframe['close'] - dataframe['open']).abs() * self.REJECT_WICK_BODY_RATIO) &
@@ -433,7 +429,6 @@ class CombinedBinHAndCluc(IStrategy):
             )
             |
             (
-                # Máximo del rango + ruptura EMA8 posterior con MACD debilitando
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
                 (dataframe['close'] < dataframe['ema8']) &
@@ -473,7 +468,7 @@ class CombinedBinHAndCluc(IStrategy):
         except Exception:
             return False
 
-    # ---------------------- EXITS (alineadas con picos/vales óptimos) ----------------------
+    # ---------------------- EXITS PERSONALIZADOS ----------------------
     def custom_exit(
         self,
         pair: str,
@@ -483,6 +478,7 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
+
         # Crash guard
         if self._crash_incoming(pair):
             if (current_profit is None) or (current_profit > self.MIN_PROFIT_NET):
@@ -519,7 +515,7 @@ class CombinedBinHAndCluc(IStrategy):
             ):
                 return "peak_exit_top_optimal"
 
-            # HH + ruptura EMA8 + MACD debilitando (clásico)
+            # HH + ruptura EMA8 + MACD debilitando
             if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= self.SELL_RSI_HH_EMA):
                 return "hh_ema8_break_exit"
 
@@ -529,7 +525,7 @@ class CombinedBinHAndCluc(IStrategy):
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * self.REJECT_UPPER_ATR_MULT) and (upper_wick > self.REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= self.SELL_RSI_WICK):
                 return "upper_wick_reject_exit"
 
-            # Pérdida de momentum tras varias velas en verde
+            # Pérdida de momentum tras varias velas verdes
             if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
                 if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
                     return "momentum_fade_exit"
@@ -539,7 +535,7 @@ class CombinedBinHAndCluc(IStrategy):
 
         return None
 
-    # ---------------------- TRAILING ----------------------
+    # ---------------------- TRAILING DINÁMICO ----------------------
     def custom_stoploss(
         self,
         pair: str,
@@ -549,6 +545,7 @@ class CombinedBinHAndCluc(IStrategy):
         current_profit: float,
         **kwargs
     ) -> float:
+        # Hasta 3% de beneficio, usa stoploss fijo
         if current_profit is None or current_profit < 0.03:
             return self.stoploss
 
@@ -559,6 +556,7 @@ class CombinedBinHAndCluc(IStrategy):
             adx = float(last['adx'])
             roc5 = float(last['roc5'])
         except Exception:
+            # Fallback si no hay datos
             return stoploss_from_open(current_profit, self.FALLBACK_TRAIL_DIST)
 
         strong_trend = (adx >= self.ADX_STRONG_TREND and roc5 > 0)
