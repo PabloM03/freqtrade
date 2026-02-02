@@ -16,13 +16,13 @@ from freqtrade.persistence import Trade
 FEE_RATE = 0.001
 SLIPPAGE_BUFFER = 0.0006
 
-# ahora exigimos neto realista: ~0.9% (2 fees + slippage + margen)
+# Neto mínimo (2 fees + slippage + margen)
 MIN_PROFIT_NET = (2 * FEE_RATE) + SLIPPAGE_BUFFER + 0.006  # ~0.0086 (0.86%)
 
 # objetivos
-HARD_TP = 0.060            # 6% TP duro (antes 3.5%)
-PEAK_MIN_PROFIT = 0.020    # antes 1.0%
-HH_EMA_MIN_PROFIT = 0.028  # antes 1.3%
+HARD_TP = 0.060
+PEAK_MIN_PROFIT = 0.020
+HH_EMA_MIN_PROFIT = 0.028
 
 # stoploss
 STOPLOSS_ABS = -0.070
@@ -52,7 +52,7 @@ DEEP_BB = 0.16
 BB_ZONE_OK = 0.33
 LOWER_WICK_BODY_RATIO = 1.30
 
-# reglas compra (mantengo tus thresholds)
+# reglas compra
 A_LL10_MULT = 1.0035
 A_RSI_PREV_MAX = 46
 C_STOCH_MAX = 25
@@ -111,36 +111,39 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc_ProHold(IStrategy):
     """
-    Versión pro-hold:
-    - Evita "microsalidas" (comisión-killer)
-    - Deja correr tendencias (ADX/DI + EMA8 slope)
-    - Vende en picos/rechazos solo con profit neto decente
+    ProHold blindada:
+    - Bloquea microsalidas (ROI/exit_signal/trailing) por debajo de MIN_PROFIT_NET
+    - Fuerza hold mínimo (MIN_HOLD_BARS)
+    - Trailing dinámico real (custom_stoploss activo)
     """
 
-    stoploss = STOPLOSS_ABS
     timeframe = TIMEFRAME
     startup_candle_count = STARTUP_CANDLES
+    process_only_new_candles = True
 
-    # IMPORTANTE: dejamos ROI como "guardarraíl alto" (no micros)
+    stoploss = STOPLOSS_ABS
+
+    # Guardarraíl alto: si sale por ROI, que sea ya algo decente.
     minimal_roi = {
-        "0": 0.050,     # 5% si lo da rápido
-        "60": 0.035,    # 3.5% tras 1h
-        "180": 0.020,   # 2% tras 3h
-        "360": 0.012    # 1.2% tras 6h
+        "0": 0.050,
+        "60": 0.035,
+        "180": 0.020,
+        "360": 0.012
     }
 
-    # Para que no cierre por señales simples; usaremos custom_exit
     use_exit_signal = False
     exit_profit_only = True
     ignore_roi_if_entry_signal = False
 
-    # trailing "del bot" lo apagamos para no pelear con custom_stoploss
+    # IMPORTANTE: activar custom_stoploss
+    use_custom_stoploss = True
+
+    # NO usar trailing del core (para que no pelee con custom_stoploss)
     trailing_stop = False
 
-    # mínimo de velas en trade (real)
-    MIN_HOLD_BARS = 6   # 30 min en 5m
+    MIN_HOLD_BARS = 6  # 30 min en 5m
 
-    # ============ INDICADORES ============
+    # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         mid, lower = bollinger_bands(
             dataframe['close'], window_size=BB40_WINDOW, num_of_std=BB40_STDS
@@ -219,13 +222,12 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
         dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
 
-        # tendencia/hold helpers
         dataframe['trend_ok'] = (dataframe['adx'] > 22) & (dataframe['plus_di'] > dataframe['minus_di']) & dataframe['ema8_slope_up']
         dataframe['trend_strong'] = (dataframe['adx'] >= ADX_STRONG_TREND) & (dataframe['plus_di'] > dataframe['minus_di']) & dataframe['ema8_slope_up']
 
         return dataframe
 
-    # ============ COMPRAS ============
+    # ---------------------- COMPRAS ----------------------
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
             (dataframe['pct_1'] > PCT1_MIN) &
@@ -314,13 +316,10 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        dataframe.loc[
-            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D),
-            'buy'
-        ] = 1
+        dataframe.loc[(((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D), 'buy'] = 1
         return dataframe
 
-    # ============ UTIL ============
+    # ---------------------- UTIL ----------------------
     def _bars_elapsed(self, trade: Trade, current_time: datetime) -> int:
         tf_minutes = int(self.timeframe.rstrip('m'))
         seconds = (current_time - trade.open_date_utc).total_seconds()
@@ -339,7 +338,7 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         except Exception:
             return False
 
-    # ============ EXIT (inteligente) ============
+    # ---------------------- EXIT (inteligente) ----------------------
     def custom_exit(
         self,
         pair: str,
@@ -350,7 +349,7 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         **kwargs
     ) -> Optional[str]:
 
-        # crash guard: sal si ya hay profit neto o estás plano
+        # crash guard: permite salir aunque no hayas llegado a neto
         if self._crash_incoming(pair):
             if (current_profit is None) or (current_profit >= 0.0):
                 return "crash_guard"
@@ -360,15 +359,12 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
 
         bars = self._bars_elapsed(trade, current_time)
 
-        # NO salgas por debajo de neto mínimo (comisiones + margen)
         if current_profit < MIN_PROFIT_NET:
             return None
 
-        # mínimo de tiempo en trade, salvo dump fuerte
         if bars < self.MIN_HOLD_BARS:
             return None
 
-        # TP duro
         if current_profit >= HARD_TP:
             return "hard_tp"
 
@@ -389,24 +385,23 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             upper_wick = float(last['high'] - max(last['open'], last['close']))
             body = float(abs(last['close'] - last['open']))
 
-            # 1) Si hay tendencia fuerte: DEJA CORRER, vende solo si rompe EMA8 + se apaga MACD
+            # Tendencia fuerte: deja correr, vende solo si rompe + se apaga
             if trend_strong:
                 if current_profit >= 0.040 and ema_break and macd_fade:
                     return "trend_strong_fade_exit"
                 return None
 
-            # 2) Pico óptimo con profit decente
+            # Pico óptimo
             if current_profit >= PEAK_MIN_PROFIT and near_upper and loc_peak and (last['rsi'] >= SELL_RSI_PEAK) and (bear_candle or macd_fade or ema_break):
                 return "peak_exit"
 
-            # 3) Rechazo por mecha grande en zona alta (pero con profit neto)
+            # Rechazo por mecha grande
             if near_upper and (upper_wick >= last['atr'] * REJECT_UPPER_ATR_MULT) and (upper_wick > REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= SELL_RSI_WICK):
-                # si hay tendencia ok, exige más profit para vender por mecha
                 if trend_ok and current_profit < 0.020:
                     return None
                 return "upper_wick_reject_exit"
 
-            # 4) Si no hay tendencia: salida por pérdida de momentum tras subir
+            # Pérdida de momentum
             if current_profit >= 0.018 and (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
                 return "momentum_fade_exit"
 
@@ -415,7 +410,45 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
 
         return None
 
-    # ============ STOPLOSS dinámico ============
+    # ---------------------- BLOQUEO DE MICROSALIDAS ----------------------
+    def confirm_trade_exit(
+        self,
+        pair: str,
+        trade: Trade,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        exit_reason: str,
+        current_time: datetime,
+        **kwargs
+    ) -> bool:
+        """
+        Veta cierres cutres:
+        - Bloquea ROI / exit_signal / trailing / force_exit si no se cumple neto mínimo
+        - Bloquea cualquier salida antes del hold mínimo (excepto crash_guard)
+        """
+        # crash_guard siempre permitido
+        if exit_reason == "crash_guard":
+            return True
+
+        # calcula bars y profit actual estimado si viene en kwargs
+        bars = self._bars_elapsed(trade, current_time)
+
+        # Freqtrade suele pasar current_profit en kwargs en versiones recientes
+        current_profit = kwargs.get("current_profit", None)
+
+        # si no viene, no bloquees a ciegas por profit, pero sí por tiempo mínimo
+        if bars < self.MIN_HOLD_BARS:
+            return False
+
+        if current_profit is not None and current_profit < MIN_PROFIT_NET:
+            # aquí es donde matas el 0.03% “roi”
+            return False
+
+        return True
+
+    # ---------------------- STOPLOSS dinámico ----------------------
     def custom_stoploss(
         self,
         pair: str,
@@ -426,7 +459,6 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         **kwargs
     ) -> float:
 
-        # antes de +2.5%: stop fijo amplio (no cortes ruido)
         if current_profit is None or current_profit < 0.025:
             return self.stoploss
 
