@@ -4,6 +4,7 @@ import talib.abstract as ta
 
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.strategy import stoploss_from_open
+from freqtrade.strategy import DecimalParameter, IntParameter
 from pandas import DataFrame
 from datetime import datetime
 from typing import Optional
@@ -11,31 +12,21 @@ from freqtrade.persistence import Trade
 
 
 # ==========================
-# PARÁMETROS (pro-hold / más profit)
+# PARÁMETROS BASE (constantes)
 # ==========================
 FEE_RATE = 0.001
 SLIPPAGE_BUFFER = 0.0006
 
-# Exigir neto (fees + slippage + margen) -> evita "comisión-killer"
-MIN_PROFIT_NET = (2 * FEE_RATE) + SLIPPAGE_BUFFER + 0.0075  # ~0.0101 (1.01%)
-
-# objetivos (más ambiciosos)
-HARD_TP = 0.10            # 10% TP duro
-PEAK_MIN_PROFIT = 0.030   # 3.0% para vender por pico
-HH_EMA_MIN_PROFIT = 0.040 # 4.0% para vender por HH + EMA8 break
-
-# stoploss (amplio)
+# stoploss absoluto base
 STOPLOSS_ABS = -0.070
 
-# trailing dinámico (más holgado, para dejar correr)
-TRAIL_ATR_MULT_LOW = 3.2
-TRAIL_ATR_MULT_HIGH = 5.2
-TRAIL_DIST_MIN = 0.030
-TRAIL_DIST_MAX = 0.110
-TRAIL_VERTICAL_MIN = 0.050
-ADX_STRONG_TREND = 30
-ROC5_VERTICAL = 4.2
-FALLBACK_TRAIL_DIST = 0.040
+TIMEFRAME = '5m'
+STARTUP_CANDLES = 130
+
+BB40_WINDOW = 40
+BB40_STDS = 2.2
+BB20_WINDOW = 20
+BB20_STDS = 2.2
 
 # anti-cuchillo
 PCT1_MIN = -2.5
@@ -45,14 +36,13 @@ COOLDOWN_BARS = 3
 # filtro de compras altas
 NO_BUY_BB_MULT = 1.000
 NO_BUY_EMA20_MULT = 1.000
-NO_BUY_RSI_MIN = 55
 
 # zonas BB
 DEEP_BB = 0.16
 BB_ZONE_OK = 0.33
 LOWER_WICK_BODY_RATIO = 1.30
 
-# reglas compra
+# reglas compra (mantengo thresholds)
 A_LL10_MULT = 1.0035
 A_RSI_PREV_MAX = 46
 C_STOCH_MAX = 25
@@ -67,13 +57,11 @@ F_BB_PERCENT_MAX = 0.28
 F_LL10_UPPER = 1.004
 F_LL10_LOWER = 0.992
 
-# ventas (más “exigentes”)
-REJECT_UPPER_ATR_MULT = 1.20
-REJECT_WICK_BODY_RATIO = 1.45
-SELL_RSI_PEAK = 74
-SELL_RSI_REJECT = 68
-SELL_RSI_HH_EMA = 66
-SELL_RSI_WICK = 68
+# ventas
+REJECT_UPPER_ATR_MULT = 1.10
+REJECT_WICK_BODY_RATIO = 1.35
+SELL_RSI_PEAK = 72
+SELL_RSI_WICK = 66
 
 # crash-guard
 CRASH_FAST_DROP_EMA8 = 0.988
@@ -82,23 +70,8 @@ CRASH_ATR_BREAK_MULT = 1.6
 CRASH_ADX_MIN = 26
 CRASH_RSI_MAX = 50
 
-TIMEFRAME = '5m'
-STARTUP_CANDLES = 130
-
-BB40_WINDOW = 40
-BB40_STDS = 2.2
-BB20_WINDOW = 20
-BB20_STDS = 2.2
-
-# anti-chase
-MAX_PCT_UP_1 = 0.6
-MAX_PCT_UP_3 = 1.8
-MAX_GREEN_STREAK = 2
-BUY_BELOW_EMA20_MULT = 0.996
-BUY_BELOW_BB_MID_MULT = 0.996
+# anti-chase (valores base; algunos se afinan vía parámetros)
 BB_EXPANDING_HIGH = 0.50
-PUMP_VOL_MULT = 2.2
-NEAR_HH_DISTANCE = 0.0150
 REQUIRE_RED_PULLBACK = True
 
 
@@ -111,38 +84,91 @@ def bollinger_bands(stock_price, window_size, num_of_std):
 
 class CombinedBinHAndCluc_ProHold(IStrategy):
     """
-    Pro-hold:
-    - Evita microsalidas (neto mínimo + hold mínimo)
-    - Deja correr tendencias (trend_strong)
-    - Exits solo con señales de pico/rechazo/momentum cuando el profit ya es decente
+    Versión ProHold:
+    - Evita microsalidas (comisión-killer)
+    - Deja correr tendencias (ADX/DI + EMA8 slope)
+    - Vende en picos/rechazos solo con profit neto decente
+    - Stop dinámico controlado (evita que "trailing" te saque en -6% tras haber ido en positivo)
     """
 
+    # ==========================
+    # CONFIG BASE
+    # ==========================
     stoploss = STOPLOSS_ABS
     timeframe = TIMEFRAME
     startup_candle_count = STARTUP_CANDLES
 
-    # ROI como guardarraíl alto (para no “roi” cutre)
     minimal_roi = {
-        "0": 0.080,     # 8% si lo da rápido
-        "60": 0.060,    # 6% tras 1h
-        "180": 0.040,   # 4% tras 3h
-        "360": 0.025    # 2.5% tras 6h
+        "0": 0.050,
+        "60": 0.035,
+        "180": 0.020,
+        "360": 0.012
     }
 
     use_exit_signal = False
     exit_profit_only = True
     ignore_roi_if_entry_signal = False
-
-    # No usar trailing del core
     trailing_stop = False
 
-    # Activar custom_stoploss
-    use_custom_stoploss = True
+    MIN_HOLD_BARS = 6  # 30 min en 5m
 
-    # Hold mínimo para matar trades basura
-    MIN_HOLD_BARS = 9   # 45 min en 5m
+    # ==========================
+    # PARÁMETROS (profesional, sin romper)
+    # ==========================
+    # Umbral neto mínimo (comisiones + slippage + margen)
+    min_profit_net = DecimalParameter(
+        0.0040, 0.0200,
+        default=(2 * FEE_RATE) + SLIPPAGE_BUFFER + 0.006,
+        decimals=4,
+        space="sell",
+        optimize=False
+    )
 
-    # ---------------------- INDICADORES ----------------------
+    # TP duro
+    hard_tp = DecimalParameter(0.020, 0.120, default=0.060, decimals=3, space="sell", optimize=False)
+
+    # Umbrales de salida por contexto
+    peak_min_profit = DecimalParameter(0.008, 0.060, default=0.020, decimals=3, space="sell", optimize=False)
+
+    # Activación trailing en función de current_profit (esto es lo “parametrizable”)
+    profit_trail_start = DecimalParameter(0.010, 0.080, default=0.035, decimals=3, space="sell", optimize=False)
+
+    # Trend definition (strong_trend parametrizado)
+    adx_strong_trend = IntParameter(18, 45, default=28, space="sell", optimize=False)
+    roc5_strong_min = DecimalParameter(-2.0, 2.0, default=0.0, decimals=2, space="sell", optimize=False)
+
+    # Salida en strong trend solo si hay profit suficiente + señales de fade
+    strong_trend_fade_profit = DecimalParameter(0.020, 0.120, default=0.040, decimals=3, space="sell", optimize=False)
+
+    # Trailing dinámico controlado (parámetros clave)
+    trail_atr_mult_low = DecimalParameter(1.0, 4.0, default=2.0, decimals=2, space="sell", optimize=False)
+    trail_atr_mult_high = DecimalParameter(1.5, 6.0, default=3.0, decimals=2, space="sell", optimize=False)
+
+    trail_dist_min = DecimalParameter(0.008, 0.050, default=0.018, decimals=3, space="sell", optimize=False)
+    trail_dist_max = DecimalParameter(0.020, 0.080, default=0.040, decimals=3, space="sell", optimize=False)
+
+    trail_vertical_min = DecimalParameter(0.010, 0.080, default=0.030, decimals=3, space="sell", optimize=False)
+    roc5_vertical = DecimalParameter(1.0, 10.0, default=3.8, decimals=2, space="sell", optimize=False)
+
+    fallback_trail_dist = DecimalParameter(0.008, 0.060, default=0.020, decimals=3, space="sell", optimize=False)
+
+    # Anti-chase (para que opere “de verdad” en SOL/XRP/DOGE/ADA sin volverse loco)
+    max_pct_up_1 = DecimalParameter(0.2, 2.0, default=0.9, decimals=2, space="buy", optimize=False)
+    max_pct_up_3 = DecimalParameter(0.5, 6.0, default=2.5, decimals=2, space="buy", optimize=False)
+    max_green_streak = IntParameter(1, 6, default=3, space="buy", optimize=False)
+
+    buy_below_ema20_mult = DecimalParameter(0.990, 1.005, default=0.999, decimals=3, space="buy", optimize=False)
+    buy_below_bb_mid_mult = DecimalParameter(0.990, 1.005, default=0.999, decimals=3, space="buy", optimize=False)
+
+    pump_vol_mult = DecimalParameter(1.2, 4.0, default=2.6, decimals=2, space="buy", optimize=False)
+    near_hh_distance = DecimalParameter(0.002, 0.050, default=0.010, decimals=3, space="buy", optimize=False)
+
+    # No-buy-high RSI threshold (si subes, bloquea menos)
+    no_buy_rsi_min = IntParameter(45, 75, default=60, space="buy", optimize=False)
+
+    # ==========================
+    # INDICADORES
+    # ==========================
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         mid, lower = bollinger_bands(
             dataframe['close'], window_size=BB40_WINDOW, num_of_std=BB40_STDS
@@ -216,17 +242,24 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         )
 
         dataframe['green'] = dataframe['close'] > dataframe['open']
-        dataframe['green_streak'] = dataframe['green'].rolling(window=MAX_GREEN_STREAK, min_periods=1).sum()
+        dataframe['green_streak'] = dataframe['green'].rolling(window=self.max_green_streak.value, min_periods=1).sum()
         dataframe['vol_mean_fast'] = dataframe['volume'].rolling(window=10).mean()
-        dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
-        dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
+        dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * self.pump_vol_mult.value)
+        dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - float(self.near_hh_distance.value)))
 
+        # tendencia/hold helpers
         dataframe['trend_ok'] = (dataframe['adx'] > 22) & (dataframe['plus_di'] > dataframe['minus_di']) & dataframe['ema8_slope_up']
-        dataframe['trend_strong'] = (dataframe['adx'] >= ADX_STRONG_TREND) & (dataframe['plus_di'] > dataframe['minus_di']) & dataframe['ema8_slope_up']
+        dataframe['trend_strong'] = (
+            (dataframe['adx'] >= self.adx_strong_trend.value) &
+            (dataframe['plus_di'] > dataframe['minus_di']) &
+            dataframe['ema8_slope_up']
+        )
 
         return dataframe
 
-    # ---------------------- COMPRAS ----------------------
+    # ==========================
+    # COMPRAS
+    # ==========================
     def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
             (dataframe['pct_1'] > PCT1_MIN) &
@@ -240,7 +273,7 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         no_buy_high = (
             (dataframe['close'] > dataframe['bb_middleband'] * NO_BUY_BB_MULT) &
             (dataframe['close'] > dataframe['ema_fast'] * NO_BUY_EMA20_MULT) &
-            (dataframe['rsi'] > NO_BUY_RSI_MIN)
+            (dataframe['rsi'] > self.no_buy_rsi_min.value)
         )
 
         deep_bb = (dataframe['bb_percent'] <= DEEP_BB)
@@ -251,13 +284,13 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         hammerish = lower_wick > LOWER_WICK_BODY_RATIO * body
 
         anti_chase = (
-            (dataframe['pct_1'] < MAX_PCT_UP_1) &
-            (dataframe['pct_3'] < MAX_PCT_UP_3) &
-            (dataframe['green_streak'] < MAX_GREEN_STREAK) &
+            (dataframe['pct_1'] < float(self.max_pct_up_1.value)) &
+            (dataframe['pct_3'] < float(self.max_pct_up_3.value)) &
+            (dataframe['green_streak'] < self.max_green_streak.value) &
             (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & (dataframe['bb_expanding']))) &
             (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
-            (dataframe['close'] <= dataframe['ema_fast'] * BUY_BELOW_EMA20_MULT) &
-            (dataframe['close'] <= dataframe['bb_middleband'] * BUY_BELOW_BB_MID_MULT) &
+            (dataframe['close'] <= dataframe['ema_fast'] * float(self.buy_below_ema20_mult.value)) &
+            (dataframe['close'] <= dataframe['bb_middleband'] * float(self.buy_below_bb_mid_mult.value)) &
             (~dataframe['near_hh'])
         )
         if REQUIRE_RED_PULLBACK:
@@ -315,16 +348,32 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        dataframe.loc[(((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D), 'buy'] = 1
+        dataframe.loc[
+            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D),
+            'buy'
+        ] = 1
+
         return dataframe
 
-    # ---------------------- VENTAS (OBLIGATORIO PARA QUE ARRANQUE) ----------------------
-    # No lo usamos como salida real (use_exit_signal=False), pero Freqtrade exige implementarlo.
+    # ==========================
+    # REQUIRED por Freqtrade (aunque use_exit_signal=False)
+    # ==========================
     def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Estrategia gestiona salidas con custom_exit(), así que no generamos sell signals.
         dataframe['sell'] = 0
         return dataframe
 
-    # ---------------------- UTILIDADES ----------------------
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Compatibilidad con versiones que exigen populate_exit_trend.
+        if 'exit_long' not in dataframe.columns:
+            dataframe['exit_long'] = 0
+        else:
+            dataframe['exit_long'] = 0
+        return dataframe
+
+    # ==========================
+    # UTIL
+    # ==========================
     def _bars_elapsed(self, trade: Trade, current_time: datetime) -> int:
         tf_minutes = int(self.timeframe.rstrip('m'))
         seconds = (current_time - trade.open_date_utc).total_seconds()
@@ -343,7 +392,9 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         except Exception:
             return False
 
-    # ---------------------- EXIT (inteligente) ----------------------
+    # ==========================
+    # EXIT (inteligente)
+    # ==========================
     def custom_exit(
         self,
         pair: str,
@@ -354,7 +405,7 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         **kwargs
     ) -> Optional[str]:
 
-        # crash guard
+        # crash guard: sal si ya hay profit neto o estás plano
         if self._crash_incoming(pair):
             if (current_profit is None) or (current_profit >= 0.0):
                 return "crash_guard"
@@ -364,16 +415,16 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
 
         bars = self._bars_elapsed(trade, current_time)
 
-        # No salgas por debajo del neto mínimo
-        if current_profit < MIN_PROFIT_NET:
+        # NO salgas por debajo del neto mínimo
+        if current_profit < float(self.min_profit_net.value):
             return None
 
-        # No salgas antes del hold mínimo
+        # mínimo de tiempo en trade
         if bars < self.MIN_HOLD_BARS:
             return None
 
         # TP duro
-        if current_profit >= HARD_TP:
+        if current_profit >= float(self.hard_tp.value):
             return "hard_tp"
 
         try:
@@ -382,7 +433,16 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             prev = df.iloc[-2]
 
             trend_ok = bool(last.get('trend_ok', False))
-            trend_strong = bool(last.get('trend_strong', False))
+
+            # strong_trend parametrizado (ADX + DI + slope + ROC)
+            adx = float(last['adx'])
+            roc5 = float(last['roc5'])
+            strong_trend = (
+                (adx >= float(self.adx_strong_trend.value)) and
+                (float(last['plus_di']) > float(last['minus_di'])) and
+                bool(last['ema8_slope_up']) and
+                (roc5 >= float(self.roc5_strong_min.value))
+            )
 
             near_upper = (last['close'] >= last['bb_upperband'] * 0.999) or (last['high'] >= last['bb_upperband'])
             loc_peak = bool(last['loc_peak'])
@@ -393,29 +453,34 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             upper_wick = float(last['high'] - max(last['open'], last['close']))
             body = float(abs(last['close'] - last['open']))
 
-            # Tendencia fuerte: deja correr; solo sal si ya es MUY buen profit y se rompe de verdad
-            if trend_strong:
-                if current_profit >= 0.060 and ema_break and macd_fade:
+            # 1) Si hay strong trend: deja correr; vende sólo si fade + profit suficiente
+            if strong_trend:
+                if (current_profit >= float(self.strong_trend_fade_profit.value)) and ema_break and macd_fade:
                     return "trend_strong_fade_exit"
                 return None
 
-            # Pico óptimo (profit decente)
-            if current_profit >= PEAK_MIN_PROFIT and near_upper and loc_peak and (last['rsi'] >= SELL_RSI_PEAK) and (bear_candle or macd_fade or ema_break):
+            # 2) Pico óptimo con profit decente
+            if (
+                current_profit >= float(self.peak_min_profit.value) and
+                near_upper and loc_peak and
+                (float(last['rsi']) >= SELL_RSI_PEAK) and
+                (bear_candle or macd_fade or ema_break)
+            ):
                 return "peak_exit"
 
-            # HH + ruptura EMA8 + MACD debilitando (profit alto)
-            if current_profit >= HH_EMA_MIN_PROFIT and ema_break and macd_fade and (last['rsi'] >= SELL_RSI_HH_EMA):
-                return "hh_ema8_break_exit"
-
-            # Rechazo por mecha grande (exige profit alto, y si hay trend_ok exige más)
-            if near_upper and (upper_wick >= last['atr'] * REJECT_UPPER_ATR_MULT) and (upper_wick > REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= SELL_RSI_WICK):
-                if trend_ok and current_profit < 0.030:
+            # 3) Rechazo por mecha grande en zona alta
+            if (
+                near_upper and
+                (upper_wick >= float(last['atr']) * REJECT_UPPER_ATR_MULT) and
+                (upper_wick > REJECT_WICK_BODY_RATIO * body) and
+                (float(last['rsi']) >= SELL_RSI_WICK)
+            ):
+                if trend_ok and current_profit < 0.020:
                     return None
-                if current_profit >= 0.025:
-                    return "upper_wick_reject_exit"
+                return "upper_wick_reject_exit"
 
-            # Pérdida de momentum (solo si ya hay profit)
-            if current_profit >= 0.028 and (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
+            # 4) No tendencia: salida por pérdida de momentum tras subir
+            if current_profit >= 0.018 and (float(last['rsi']) < float(last['rsi_prev'])) and macd_fade and ema_break:
                 return "momentum_fade_exit"
 
         except Exception:
@@ -423,7 +488,9 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
 
         return None
 
-    # ---------------------- STOPLOSS dinámico ----------------------
+    # ==========================
+    # STOPLOSS dinámico (controlado)
+    # ==========================
     def custom_stoploss(
         self,
         pair: str,
@@ -434,8 +501,8 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
         **kwargs
     ) -> float:
 
-        # antes de +4%: stop fijo amplio (no cortes ruido)
-        if current_profit is None or current_profit < 0.040:
+        # Antes del umbral (parametrizado por profit): stop fijo amplio
+        if current_profit is None or current_profit < float(self.profit_trail_start.value):
             return self.stoploss
 
         try:
@@ -445,18 +512,20 @@ class CombinedBinHAndCluc_ProHold(IStrategy):
             adx = float(last['adx'])
             roc5 = float(last['roc5'])
         except Exception:
-            return stoploss_from_open(current_profit, FALLBACK_TRAIL_DIST)
+            return stoploss_from_open(current_profit, float(self.fallback_trail_dist.value))
 
-        strong_trend = (adx >= ADX_STRONG_TREND and roc5 > 0)
-        vertical_rally = (roc5 >= ROC5_VERTICAL)
+        strong_trend = (adx >= float(self.adx_strong_trend.value) and roc5 >= float(self.roc5_strong_min.value))
+        vertical_rally = (roc5 >= float(self.roc5_vertical.value))
 
-        k = TRAIL_ATR_MULT_HIGH if current_profit > 0.10 else TRAIL_ATR_MULT_LOW
+        k = float(self.trail_atr_mult_high.value) if current_profit > 0.08 else float(self.trail_atr_mult_low.value)
         dist = (k * atr) / max(current_rate, 1e-9)
-        dist = min(TRAIL_DIST_MAX, max(TRAIL_DIST_MIN, dist))
+
+        dist = min(float(self.trail_dist_max.value), max(float(self.trail_dist_min.value), dist))
 
         if vertical_rally:
-            dist = max(dist, TRAIL_VERTICAL_MIN)
+            dist = max(dist, float(self.trail_vertical_min.value))
         elif not strong_trend:
-            dist = min(dist, 0.035)
+            # Clave: evita que el trailing “permita” caídas enormes en mercados chop
+            dist = min(dist, 0.022)
 
         return stoploss_from_open(current_profit, dist)
