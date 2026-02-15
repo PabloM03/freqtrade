@@ -112,7 +112,7 @@ def bollinger_bands(stock_price, window_size, num_of_std):
     return np.nan_to_num(rolling_mean), np.nan_to_num(lower_band)
 
 
-class MyStrategy(IStrategy):
+class CombinedBinHAndCluc_ProHold(IStrategy):
     """
     - Compras: en bajadas óptimas (mínimo local claro + capitulación/giro), no en mitad de subida.
     - Ventas: en picos óptimos (máximo local claro + rechazo/giro).
