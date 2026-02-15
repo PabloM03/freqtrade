@@ -10,7 +10,7 @@ from typing import Optional
 from freqtrade.persistence import Trade
 
 
-class MyStrategy(IStrategy):
+class EMAPullback_Pro(IStrategy):
     """
     Estrategia simple y robusta basada en medias móviles:
     - Filtro de tendencia: EMA200
