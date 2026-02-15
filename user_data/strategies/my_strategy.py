@@ -50,7 +50,7 @@ from functools import reduce
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 
 # Diamond Strategy
-class MyStrategy(IStrategy):
+class Diamond(IStrategy):
     # ###################### RESULT PLACE ######################
     #    Config: 5 x UNLIMITED STOCK costume pair list,
     #    hyperopt : 5000 x SortinoHyperOptLossDaily,
