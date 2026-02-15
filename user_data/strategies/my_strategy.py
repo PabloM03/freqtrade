@@ -1,183 +1,155 @@
-# pragma pylint: disable=missing-docstring, invalid-name, pointless-string-statement
-# flake8: noqa: F401
-# isort: skip_file
-# --- Do not remove these imports ---
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta, timezone
+# 𝐼𝓉 𝒾𝓈 𝒟𝒾𝒶𝓂𝑜𝓃𝒹 𝒮𝓉𝓇𝒶𝓉𝑒𝑔𝓎.
+# 𝒯𝒽𝒶𝓉 𝓉𝒶𝓀𝑒𝓈 𝒽𝑒𝓇 𝑜𝓌𝓃 𝓇𝒾𝑔𝒽𝓉𝓈 𝓁𝒾𝓀𝑒 𝒜𝒻𝑔𝒽𝒶𝓃𝒾𝓈𝓉𝒶𝓃 𝓌𝑜𝓂𝑒𝓃
+# 𝒯𝒽𝑜𝓈𝑒 𝓌𝒽𝑜 𝓈𝓉𝒾𝓁𝓁 𝓅𝓇𝑜𝓊𝒹 𝒶𝓃𝒹 𝒽𝑜𝓅𝑒𝒻𝓊𝓁.
+# 𝒯𝒽𝑜𝓈𝑒 𝓌𝒽𝑜 𝓉𝒽𝑒 𝓂𝑜𝓈𝓉 𝒷𝑒𝒶𝓊𝓉𝒾𝒻𝓊𝓁 𝒸𝓇𝑒𝒶𝓉𝓊𝓇𝑒𝓈 𝒾𝓃 𝓉𝒽𝑒 𝒹𝑒𝓅𝓉𝒽𝓈 𝑜𝒻 𝓉𝒽𝑒 𝒹𝒶𝓇𝓀𝑒𝓈𝓉.
+# 𝒯𝒽𝑜𝓈𝑒 𝓌𝒽𝑜 𝓈𝒽𝒾𝓃𝑒 𝓁𝒾𝓀𝑒 𝒹𝒾𝒶𝓂𝑜𝓃𝒹𝓈 𝒷𝓊𝓇𝒾𝑒𝒹 𝒾𝓃 𝓉𝒽𝑒 𝒽𝑒𝒶𝓇𝓉 𝑜𝒻 𝓉𝒽𝑒 𝒹𝑒𝓈𝑒𝓇𝓉 ...
+# 𝒲𝒽𝓎 𝓃𝑜𝓉 𝒽𝑒𝓁𝓅 𝓌𝒽𝑒𝓃 𝓌𝑒 𝒸𝒶𝓃?
+# 𝐼𝒻 𝓌𝑒 𝒷𝑒𝓁𝒾𝑒𝓋𝑒 𝓉𝒽𝑒𝓇𝑒 𝒾𝓈 𝓃𝑜 𝓂𝒶𝓃 𝓁𝑒𝒻𝓉 𝓌𝒾𝓉𝒽 𝓉𝒽𝑒𝓂
+# (𝒲𝒽𝒾𝒸𝒽 𝒾𝓈 𝓅𝓇𝑜𝒷𝒶𝒷𝓁𝓎 𝓉𝒽𝑒 𝓅𝓇𝑜𝒹𝓊𝒸𝓉 𝑜𝒻 𝓉𝒽𝑒 𝓉𝒽𝑜𝓊𝑔𝒽𝓉 𝑜𝒻 𝓅𝒶𝒾𝓃𝓁𝑒𝓈𝓈 𝒸𝑜𝓇𝓅𝓈𝑒𝓈)
+# 𝒲𝒽𝑒𝓇𝑒 𝒽𝒶𝓈 𝑜𝓊𝓇 𝒽𝓊𝓂𝒶𝓃𝒾𝓉𝓎 𝑔𝑜𝓃𝑒?
+# 𝒲𝒽𝑒𝓇𝑒 𝒽𝒶𝓈 𝒽𝓊𝓂𝒶𝓃𝒾𝓉𝓎 𝑔𝑜𝓃𝑒?
+# 𝒲𝒽𝓎 𝓃𝑜𝓉 𝒽𝑒𝓁𝓅 𝓌𝒽𝑒𝓃 𝓌𝑒 𝒸𝒶𝓃?
+# 𝓁𝑒𝓉𝓈 𝓅𝒾𝓅 𝓊𝓃𝒾𝓃𝓈𝓉𝒶𝓁𝓁 𝓉𝒶-𝓁𝒾𝒷 𝑜𝓃 𝒜𝒻𝑔𝒽𝒶𝓃𝒾𝓈𝓉𝒶𝓃
+
+# IMPORTANT: Diamond strategy is designed to be pure and
+# cuz of that it have not any indicator population. idea is that
+# It is just use the pure dataframe ohlcv data for calculation
+# of buy/sell signals, But you can add your indicators and add
+# your key names inside catagorical hyperoptable params and
+# than you be able to hyperopt them as well.
+# thanks to: @Kroissan, @drakes00 And @xmatthias for his patience and helps
+# Author: @Mablue (Masoud Azizi)
+# github: https://github.com/mablue/
+# * freqtrade backtesting --strategy Diamond
+
+# freqtrade hyperopt --hyperopt-loss ShortTradeDurHyperOptLoss --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *    3/10:     76 trades. 51/18/7 Wins/Draws/Losses. Avg profit   1.92%. Median profit   2.40%. Total profit  0.04808472 BTC (  48.08%). Avg duration 5:06:00 min. Objective: 1.75299
+# freqtrade hyperopt --hyperopt-loss OnlyProfitHyperOptLoss --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *   10/10:     76 trades. 39/34/3 Wins/Draws/Losses. Avg profit   0.61%. Median profit   0.05%. Total profit  0.01528359 BTC (  15.28%). Avg duration 17:32:00 min. Objective: -0.01528
+# freqtrade hyperopt --hyperopt-loss SharpeHyperOptLoss --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *    4/10:     15 trades. 10/2/3 Wins/Draws/Losses. Avg profit   1.52%. Median profit   7.99%. Total profit  0.00754274 BTC (   7.54%). Avg duration 1 day, 0:04:00 min. Objective: -0.90653
+# freqtrade hyperopt --hyperopt-loss SharpeHyperOptLossDaily --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *    7/10:    130 trades. 68/54/8 Wins/Draws/Losses. Avg profit   0.71%. Median profit   0.06%. Total profit  0.03050369 BTC (  30.50%). Avg duration 10:07:00 min. Objective: -11.08185
+# freqtrade hyperopt --hyperopt-loss SortinoHyperOptLoss --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *    2/10:     10 trades. 7/0/3 Wins/Draws/Losses. Avg profit   5.50%. Median profit   7.05%. Total profit  0.01817970 BTC (  18.18%). Avg duration 0:27:00 min. Objective: -11.72450
+# freqtrade hyperopt --hyperopt-loss SortinoHyperOptLossDaily --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+#   | * Best |    3/10 |      165 |     98   63    4 |        1.00% |    0.05453885 BTC   (54.54%) | 0 days 08:02:00 |    0.00442974 BTC   (13.41%) |     -41.371 |
+#   | * Best |    7/10 |      101 |     56   42    3 |        0.73% |    0.02444518 BTC   (24.45%) | 0 days 13:08:00 |    0.00107122 BTC    (3.24%) |    -66.7687 |
+# *    7/10:    101 trades. 56/42/3 Wins/Draws/Losses. Avg profit   0.73%. Median profit   0.13%. Total profit  0.02444518 BTC (  24.45%). Avg duration 13:08:00 min. Objective: -66.76866
+# freqtrade hyperopt --hyperopt-loss OnlyProfitHyperOptLoss --spaces buy sell roi trailing stoploss --strategy Diamond -j 2 -e 10
+# *    7/10:    117 trades. 74/41/2 Wins/Draws/Losses. Avg profit   1.91%. Median profit   1.50%. Total profit  0.07370921 BTC (  73.71%). Avg duration 9:26:00 min. Objective: -0.07371
+
+# --- Do not remove these libs ---
+from freqtrade.strategy import CategoricalParameter, DecimalParameter, IntParameter, IStrategy
 from pandas import DataFrame
-from typing import Optional, Union
+# --------------------------------
 
-from freqtrade.strategy import (
-    IStrategy,
-    Trade,
-    Order,
-    PairLocks,
-    informative,
-    BooleanParameter,
-    CategoricalParameter,
-    DecimalParameter,
-    IntParameter,
-    RealParameter,
-    timeframe_to_minutes,
-    timeframe_to_next_date,
-    timeframe_to_prev_date,
-    merge_informative_pair,
-    stoploss_from_absolute,
-    stoploss_from_open,
-)
-
+# Add your lib to import here
 import talib.abstract as ta
-from technical import qtpylib
+from functools import reduce
+import freqtrade.vendor.qtpylib.indicators as qtpylib
 
-
+# Diamond Strategy
 class MyStrategy(IStrategy):
-    INTERFACE_VERSION = 3
+    # ###################### RESULT PLACE ######################
+    #    Config: 5 x UNLIMITED STOCK costume pair list,
+    #    hyperopt : 5000 x SortinoHyperOptLossDaily,
+    #    34/5000: 297 trades. 136/156/5 Wins/Draws/Losses. Avg profit   0.49%. Median profit   0.00%. Total profit  45.84477237 USDT (  33.96Σ%). Avg duration 11:54:00 min. Objective: -46.50379
+    INTERFACE_VERSION: int = 3
 
-    # Long only (tu código tenía short pero lo tenías desactivado: mejor no generar señales short)
-    can_short: bool = False
+    # Buy hyperspace params:
+    buy_params = {
+        "buy_fast_key": "high",
+        "buy_horizontal_push": 7,
+        "buy_slow_key": "volume",
+        "buy_vertical_push": 0.942,
+    }
 
-    timeframe = "5m"
-    process_only_new_candles = True
+    # Sell hyperspace params:
+    sell_params = {
+        "sell_fast_key": "high",
+        "sell_horizontal_push": 10,
+        "sell_slow_key": "low",
+        "sell_vertical_push": 1.184,
+    }
 
-    use_exit_signal = True
-    exit_profit_only = True          # <- evita “salidas tontas” si no hay profit
-    ignore_roi_if_entry_signal = False
-
-    # ROI más coherente para buscar tramos (no scalping micro)
+    # ROI table:
     minimal_roi = {
-        "0": 0.06,     # si hay tramo, busca 6%
-        "30": 0.04,    # a partir de 30m baja exigencia
-        "90": 0.025,
-        "180": 0.015,
-        "360": 0.0,
+        "0": 0.242,
+        "13": 0.044,
+        "51": 0.02,
+        "170": 0
     }
 
-    # Stoploss menos suicida que -10% en 5m (pero sigue dando aire)
-    stoploss = -0.08
+    # Stoploss:
+    stoploss = -0.271
 
-    # Trailing para capturar “beneficios grandes”
+    # Trailing stop:
     trailing_stop = True
-    trailing_stop_positive = 0.012          # asegura +1.2% una vez activado
-    trailing_stop_positive_offset = 0.03    # no se activa hasta +3%
-    trailing_only_offset_is_reached = True
+    trailing_stop_positive = 0.011
+    trailing_stop_positive_offset = 0.054
+    trailing_only_offset_is_reached = False
+    # timeframe
+    timeframe = '5m'
+    # #################### END OF RESULT PLACE ####################
 
-    startup_candle_count: int = 200
+    buy_vertical_push = DecimalParameter(0.5, 1.5, decimals=3, default=1, space='buy')
+    buy_horizontal_push = IntParameter(0, 10, default=0, space='buy')
+    buy_fast_key = CategoricalParameter(['open', 'high', 'low', 'close', 'volume',
+                                         #  you can not enable this lines befour you
+                                         #  populate an indicator for them and set
+                                         #  the same key name for it
+                                         #  'ma_fast', 'ma_slow', {...}
+                                         ], default='ma_fast', space='buy')
+    buy_slow_key = CategoricalParameter(['open', 'high', 'low', 'close', 'volume',
+                                         #  'ma_fast', 'ma_slow', {...}
+                                         ], default='ma_slow', space='buy')
 
-    order_types = {
-        "entry": "limit",
-        "exit": "limit",
-        "stoploss": "market",
-        "stoploss_on_exchange": False,
-    }
-    order_time_in_force = {"entry": "GTC", "exit": "GTC"}
-
-    # ==========================
-    # Parámetros optimizables (hyperopt)
-    # ==========================
-    buy_rsi = IntParameter(10, 45, default=28, space="buy", optimize=True, load=True)
-    sell_rsi = IntParameter(55, 95, default=72, space="sell", optimize=True, load=True)
-
-    buy_adx = IntParameter(10, 35, default=18, space="buy", optimize=True, load=True)
-    buy_bb_percent = DecimalParameter(0.05, 0.40, default=0.20, decimals=2, space="buy", optimize=True, load=True)
-    buy_bb_width = DecimalParameter(0.01, 0.12, default=0.03, decimals=3, space="buy", optimize=True, load=True)
-
-    sell_bb_percent = DecimalParameter(0.60, 0.98, default=0.88, decimals=2, space="sell", optimize=True, load=True)
-
-    plot_config = {
-        "main_plot": {"tema": {}, "sar": {"color": "white"}},
-        "subplots": {
-            "MACD": {"macd": {"color": "blue"}, "macdsignal": {"color": "orange"}},
-            "RSI": {"rsi": {"color": "red"}},
-        },
-    }
-
-    def informative_pairs(self):
-        return []
+    sell_vertical_push = DecimalParameter(0.5, 1.5, decimals=3,  default=1, space='sell')
+    sell_horizontal_push = IntParameter(0, 10, default=0, space='sell')
+    sell_fast_key = CategoricalParameter(['open', 'high', 'low', 'close', 'volume',
+                                          #  'ma_fast', 'ma_slow', {...}
+                                          ], default='ma_fast', space='sell')
+    sell_slow_key = CategoricalParameter(['open', 'high', 'low', 'close', 'volume',
+                                          #  'ma_fast', 'ma_slow', {...}
+                                          ], default='ma_slow', space='sell')
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Momentum
-        dataframe["adx"] = ta.ADX(dataframe)
-        dataframe["rsi"] = ta.RSI(dataframe)
-
-        stoch_fast = ta.STOCHF(dataframe)
-        dataframe["fastd"] = stoch_fast["fastd"]
-        dataframe["fastk"] = stoch_fast["fastk"]
-
-        macd = ta.MACD(dataframe)
-        dataframe["macd"] = macd["macd"]
-        dataframe["macdsignal"] = macd["macdsignal"]
-        dataframe["macdhist"] = macd["macdhist"]
-
-        dataframe["mfi"] = ta.MFI(dataframe)
-
-        # Bollinger
-        bollinger = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
-        dataframe["bb_lowerband"] = bollinger["lower"]
-        dataframe["bb_middleband"] = bollinger["mid"]
-        dataframe["bb_upperband"] = bollinger["upper"]
-        dataframe["bb_percent"] = (dataframe["close"] - dataframe["bb_lowerband"]) / (
-            dataframe["bb_upperband"] - dataframe["bb_lowerband"]
-        )
-        dataframe["bb_width"] = (dataframe["bb_upperband"] - dataframe["bb_lowerband"]) / dataframe["bb_middleband"]
-
-        # Trend
-        dataframe["sar"] = ta.SAR(dataframe)
-        dataframe["tema"] = ta.TEMA(dataframe, timeperiod=9)
-
-        # Extra helpers
-        dataframe["tema_rising"] = dataframe["tema"] > dataframe["tema"].shift(1)
-        dataframe["tema_falling"] = dataframe["tema"] < dataframe["tema"].shift(1)
-        dataframe["macdhist_rising"] = dataframe["macdhist"] > dataframe["macdhist"].shift(1)
-        dataframe["macdhist_falling"] = dataframe["macdhist"] < dataframe["macdhist"].shift(1)
-
+        # you can add new indicators and enable them inside
+        # hyperoptable categorical params on the top
+        # dataframe['ma_fast'] = ta.SMA(dataframe, timeperiod=9)
+        # dataframe['ma_slow'] = ta.SMA(dataframe, timeperiod=18)
+        # dataframe['{...}'] = ta.{...}(dataframe, timeperiod={...})
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
+        conditions = []
+        conditions.append(
+            qtpylib.crossed_above
             (
-                (dataframe["volume"] > 0)
-                # 1) Evitar lateralidad muerta: necesitas volatilidad mínima
-                & (dataframe["bb_width"] > self.buy_bb_width.value)
-                # 2) Evitar mercados sin dirección: ADX mínimo
-                & (dataframe["adx"] > self.buy_adx.value)
-                # 3) Zona “barata” dentro de BB (más margen hasta arriba)
-                & (dataframe["bb_percent"] < self.buy_bb_percent.value)
-                # 4) Giro a favor: TEMA subiendo y precio no por encima de BB mid
-                & (dataframe["tema"] <= dataframe["bb_middleband"])
-                & (dataframe["tema_rising"])
-                # 5) Impulso real: MACD hist subiendo
-                & (dataframe["macdhist_rising"])
-                # 6) RSI confirma salida de sobreventa (menos ruido que solo “cruce”)
-                & (dataframe["rsi"] > self.buy_rsi.value)
-                & (dataframe["rsi"].shift(1) <= self.buy_rsi.value)
-                # 7) Evita comprar ya recalentado por flujo (MFI muy alto)
-                & (dataframe["mfi"] < 70)
-            ),
-            "enter_long",
-        ] = 1
+                dataframe[self.buy_fast_key.value].shift(self.buy_horizontal_push.value),
+                dataframe[self.buy_slow_key.value] * self.buy_vertical_push.value
+            )
+        )
+
+        if conditions:
+            dataframe.loc[
+                reduce(lambda x, y: x & y, conditions),
+                'enter_long']=1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
+        conditions = []
+        conditions.append(
+            qtpylib.crossed_below
             (
-                (dataframe["volume"] > 0)
-                # Salida por zona alta + pérdida de impulso
-                & (
-                    (
-                        (dataframe["bb_percent"] > self.sell_bb_percent.value)
-                        & (dataframe["tema_falling"])
-                        & (dataframe["macdhist_falling"])
-                    )
-                    |
-                    (
-                        (dataframe["rsi"] > self.sell_rsi.value)
-                        & (dataframe["tema_falling"])
-                    )
-                )
-            ),
-            "exit_long",
-        ] = 1
-
+                dataframe[self.sell_fast_key.value].shift(self.sell_horizontal_push.value),
+                dataframe[self.sell_slow_key.value] * self.sell_vertical_push.value
+            )
+        )
+        if conditions:
+            dataframe.loc[
+                reduce(lambda x, y: x & y, conditions),
+                'exit_long']=1
         return dataframe
