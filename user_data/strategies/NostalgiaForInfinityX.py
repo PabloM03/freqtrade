@@ -116,7 +116,7 @@ else:
 #############################################################################################################
 
 
-class NostalgiaForInfinityX(IStrategy):
+class MyStrategy(IStrategy):
   INTERFACE_VERSION = 3
 
   def version(self) -> str:
