@@ -105,7 +105,6 @@ REQUIRE_RED_PULLBACK = False    # exigir una “pausa” (pullback leve) antes d
 
 
 
-
 def bollinger_bands(stock_price, window_size, num_of_std):
     rolling_mean = stock_price.rolling(window=window_size).mean()
     rolling_std = stock_price.rolling(window=window_size).std()
@@ -113,7 +112,7 @@ def bollinger_bands(stock_price, window_size, num_of_std):
     return np.nan_to_num(rolling_mean), np.nan_to_num(lower_band)
 
 
-class CombinedBinHAndCluc_ProHold(IStrategy):
+class MyStrategy(IStrategy):
     """
     - Compras: en bajadas óptimas (mínimo local claro + capitulación/giro), no en mitad de subida.
     - Ventas: en picos óptimos (máximo local claro + rechazo/giro).
