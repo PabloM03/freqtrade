@@ -265,7 +265,7 @@ class MyStrategy(IStrategy):
         dataframe['lower_wick'] = (np.minimum(dataframe['open'], dataframe['close']) - dataframe['low']).abs()
 
         # Volumen relativo
-        dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * VOL_SPIKE_MULT)
+        dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * 1.15)
 
         # Máximo/mínimo local reciente (ventanas cortas) para “picos/vales óptimos”
         dataframe['loc_peak'] = (
@@ -330,7 +330,7 @@ class MyStrategy(IStrategy):
             # Evitar compras arriba con bandas expandiéndose
             (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & (dataframe['bb_expanding']))) &
             # Evitar compras en pumps de volumen + vela verde fuerte
-            (~(dataframe['pump_vol'] & (dataframe['pct_1'] > (MAX_PCT_UP_1 * 0.8)))) &
+            (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
             # Exigir estar por debajo de referencias medias
             (dataframe['close'] <= dataframe['ema_fast'] * BUY_BELOW_EMA20_MULT) &
             (dataframe['close'] <= dataframe['bb_middleband'] * BUY_BELOW_BB_MID_MULT) &
@@ -453,7 +453,7 @@ class MyStrategy(IStrategy):
         try:
             df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
             last = df.iloc[-1]
-            return (last['minus_di'] > last['plus_di']) and (last['adx'] > ADX_BEARISH_REVERSAL) and (last['rsi'] < RSI_BEARISH_REVERSAL)
+            return (last['minus_di'] > last['plus_di']) and (last['adx'] > 23) and (last['rsi'] < 55)
         except Exception:
             return False
 
@@ -527,7 +527,7 @@ class MyStrategy(IStrategy):
                 return "upper_wick_reject_exit"
 
             # Pérdida de momentum tras varias velas en verde
-            if current_profit >= (self.MIN_PROFIT_NET + MIN_PROFIT_MOMENTUM) and bars >= 6:
+            if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
                 if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
                     return "momentum_fade_exit"
 
