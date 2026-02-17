@@ -49,7 +49,6 @@ import talib.abstract as ta
 from functools import reduce
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 
-# Diamond Strategy
 class Diamond(IStrategy):
     # ###################### RESULT PLACE ######################
     #    Config: 5 x UNLIMITED STOCK costume pair list,
