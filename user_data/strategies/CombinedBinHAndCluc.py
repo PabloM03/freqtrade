@@ -136,10 +136,10 @@ class MyStrategy(IStrategy):
 
     use_sell_signal = False
     sell_profit_only = True
-    ignore_roi_if_buy_signal = False
+    ignore_roi_if_buy_signal = True
     trailing_stop = False
-    minimal_roi = {"0": 0.0}
-    MIN_HOLD_BARS = 1
+    minimal_roi = {"0": 10.0}
+    MIN_HOLD_BARS = 3
 
     # Anti-cuchillo / filtros
     PCT1_MIN = PCT1_MIN
