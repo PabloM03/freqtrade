@@ -96,7 +96,7 @@ BB20_STDS = 2.2                 # � Desviaciones estándar para BB20. Rango t�
 
 # --- Anti-chase (evitar compras en subidas/picos) ---
 MAX_PCT_UP_1 = 0.5              # % máx. subida en 1 vela para permitir compra (usa misma escala que PCT1_MIN: en %)
-MAX_PCT_UP_3 = 2              # % máx. subida en 3 velas para permitir compra
+MAX_PCT_UP_3 = 1.5              # % máx. subida en 3 velas para permitir compra
 MAX_GREEN_STREAK = 3            # nº máx. de velas verdes recientes; si hay racha >= N, no comprar
 BUY_BELOW_EMA20_MULT = 0.999    # exigir que el precio esté por DEBAJO de EMA20 (0.998 = -0.2%)
 BUY_BELOW_BB_MID_MULT = 0.999   # exigir que el precio esté por DEBAJO de la banda media BB
