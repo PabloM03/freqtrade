@@ -101,7 +101,7 @@ MAX_GREEN_STREAK = 3            # nº máx. de velas verdes recientes; si hay ra
 BUY_BELOW_EMA20_MULT = 0.999    # exigir que el precio esté por DEBAJO de EMA20 (0.998 = -0.2%)
 BUY_BELOW_BB_MID_MULT = 0.999   # exigir que el precio esté por DEBAJO de la banda media BB
 BB_EXPANDING_HIGH = 0.45        # si bb_percent >= 0.55 y bb_expanding, no comprar (expansión arriba)
-PUMP_VOL_MULT = 2.6             # volumen de la vela > 1.7x media rápida => posible pump (bloquear)
+PUMP_VOL_MULT = 2            # volumen de la vela > 1.7x media rápida => posible pump (bloquear)
 NEAR_HH_DISTANCE = 0.0300       # no comprar si el precio está a <0.3% del máximo 20 velas
 REQUIRE_RED_PULLBACK = False    # exigir una “pausa” (pullback leve) antes de permitir compra tras subidón
 
