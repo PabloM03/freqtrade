@@ -61,7 +61,7 @@ D_PCT3_MAX = -6.0               # � Caída máxima en 3 velas para detectar ca
 D_BB_PERCENT_MAX = 0.06         # � BB% máximo para capitulación (muy cerca de la banda inferior). Rango típico: 0.03-0.08. Subirlo permite capitulación menos extrema.
 D_TAIL_ATR_MULT = 1.10          # � Multiplicador de ATR para la cola de la vela (mecha larga indica rebote). Rango típico: 0.8-1.5. Subirlo exige mechas más largas.
 # E) Pullback a EMA8
-E_RSI_MIN = 43                  # � RSI mínimo para permitir pullback alcista. Rango típico: 40-50. Subirlo exige más fuerza en el rebote.
+E_RSI_MIN = 53                  # � RSI mínimo para permitir pullback alcista. Rango típico: 40-50. Subirlo exige más fuerza en el rebote.
 E_LL10_MULT = 1.010             # � Multiplicador para comparar el mínimo con el mínimo de 10 velas. Rango típico: 1.005-1.02. Subirlo exige mínimos más bajos.
 E_BB_MID_MULT = 0.998           # � Multiplicador para comparar el precio con la banda media BB. Rango típico: 1.005-1.02. Subirlo exige precios más bajos respecto a la banda media.
 # F) Doble toque en valle
@@ -95,14 +95,14 @@ BB20_WINDOW = 20                # � Ventana de velas para Bollinger Bands cort
 BB20_STDS = 2.2                 # � Desviaciones estándar para BB20. Rango típico: 1.8-2.5. Subirlo amplía las bandas.
 
 # --- Anti-chase (evitar compras en subidas/picos) ---
-MAX_PCT_UP_1 = 1.1              # % máx. subida en 1 vela para permitir compra (usa misma escala que PCT1_MIN: en %)
-MAX_PCT_UP_3 = 3.0              # % máx. subida en 3 velas para permitir compra
+MAX_PCT_UP_1 = 0.5              # % máx. subida en 1 vela para permitir compra (usa misma escala que PCT1_MIN: en %)
+MAX_PCT_UP_3 = 2              # % máx. subida en 3 velas para permitir compra
 MAX_GREEN_STREAK = 3            # nº máx. de velas verdes recientes; si hay racha >= N, no comprar
 BUY_BELOW_EMA20_MULT = 0.999    # exigir que el precio esté por DEBAJO de EMA20 (0.998 = -0.2%)
 BUY_BELOW_BB_MID_MULT = 0.999   # exigir que el precio esté por DEBAJO de la banda media BB
-BB_EXPANDING_HIGH = 0.62        # si bb_percent >= 0.55 y bb_expanding, no comprar (expansión arriba)
+BB_EXPANDING_HIGH = 0.45        # si bb_percent >= 0.55 y bb_expanding, no comprar (expansión arriba)
 PUMP_VOL_MULT = 2.6             # volumen de la vela > 1.7x media rápida => posible pump (bloquear)
-NEAR_HH_DISTANCE = 0.0100       # no comprar si el precio está a <0.3% del máximo 20 velas
+NEAR_HH_DISTANCE = 0.0300       # no comprar si el precio está a <0.3% del máximo 20 velas
 REQUIRE_RED_PULLBACK = False    # exigir una “pausa” (pullback leve) antes de permitir compra tras subidón
 
 
