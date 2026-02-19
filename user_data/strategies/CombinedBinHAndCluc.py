@@ -12,102 +12,103 @@ from freqtrade.persistence import Trade
 
 
 # ==========================
-# ✅ PARÁMETROS GLOBALES AJUSTABLES (v2 - más operaciones, conservador)
+# ✅ PARÁMETROS GLOBALES AJUSTABLES (v3 - MUCHÍSIMA más calidad)
+# Objetivo: pocas entradas, pero con ventaja clara (value + reversal + confirmación)
 # ==========================
 
 # --- Costes y ganancias mínimas ---
 FEE_RATE = 0.001
-SLIPPAGE_BUFFER = 0.0006
-MIN_PROFIT_NET = 5 * FEE_RATE + SLIPPAGE_BUFFER      # antes 7*fee + 0.0007 -> demasiado exigente
-PEAK_MIN_PROFIT = 0.010                               # antes 0.014
-HH_EMA_MIN_PROFIT = 0.012                             # antes 0.017
-HARD_TP = 0.035                                       # antes 0.045 (más realista para capturar swings frecuentes)
+SLIPPAGE_BUFFER = 0.0007
+MIN_PROFIT_NET = 7 * FEE_RATE + SLIPPAGE_BUFFER      # exige beneficio real antes de permitir salidas
+PEAK_MIN_PROFIT = 0.015                               # vender solo en picos bien formados
+HH_EMA_MIN_PROFIT = 0.018                             # salida HH + ruptura EMA8 más exigente
+HARD_TP = 0.055                                       # busca swings buenos (no scalps)
 
-# --- Stoploss y trailing ---
-STOPLOSS_ABS = -0.055                                 # un poco menos permisivo que -0.06
-TRAIL_ATR_MULT_LOW = 2.1                               # antes 2.4 -> trailing algo más cercano
-TRAIL_ATR_MULT_HIGH = 3.2                              # antes 3.8 -> menos “dejar correr y devolver”
-TRAIL_DIST_MIN = 0.016                                 # antes 0.022 -> deja asegurar antes
-TRAIL_DIST_MAX = 0.060                                 # antes 0.075
-TRAIL_VERTICAL_MIN = 0.026                             # antes 0.032
-ADX_STRONG_TREND = 24                                  # antes 26 -> detecta tendencia “fuerte” más a menudo
-ROC5_VERTICAL = 2.6                                    # antes 3.2 -> activa vertical-rally con menos requisito
-FALLBACK_TRAIL_DIST = 0.022                            # antes 0.028
+# --- Stoploss y trailing (más “dejar correr”, pero controlado) ---
+STOPLOSS_ABS = -0.050                                 # recorta trades malos antes
+TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
+TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
+TRAIL_DIST_MIN = 0.022
+TRAIL_DIST_MAX = 0.070
+TRAIL_VERTICAL_MIN = 0.030
+ADX_STRONG_TREND = 27                                  # tendencia fuerte de verdad
+ROC5_VERTICAL = 3.0                                    # vertical-rally solo si es claro
+FALLBACK_TRAIL_DIST = 0.028
 
-# --- Anti-cuchillo (evitar entrar en cuchillos, pero sin “apagar” el bot) ---
-PCT1_MIN = -3.8                                        # antes -3.0 (permitir caídas algo mayores)
-PCT3_MIN = -8.5                                        # antes -6.8
-COOLDOWN_BARS = 1                                      # antes 2 -> reduce tiempo “sin operar” tras vela roja grande
+# --- Anti-cuchillo (más estricto: evita comprar “cayendo”) ---
+PCT1_MIN = -2.4                                        # no comprar si la última vela cae demasiado
+PCT3_MIN = -5.5                                        # no comprar si el tramo corto es feo
+COOLDOWN_BARS = 3                                      # tras vela roja grande, espera más
 
-# --- Filtro de compras altas (lo suavizamos para no bloquear demasiado) ---
-NO_BUY_BB_MULT = 1.010                                 # antes 1.006 (menos sensible)
-NO_BUY_EMA20_MULT = 1.010                              # antes 1.006
-NO_BUY_RSI_MIN = 66                                    # antes 60 (solo bloquea si está claramente sobrecomprado)
+# --- Filtro de compras altas (más estricto: no comprar arriba) ---
+NO_BUY_BB_MULT = 1.003                                 # si está por encima del mid BB -> sospechoso
+NO_BUY_EMA20_MULT = 1.003                               # si está por encima de EMA20 -> sospechoso
+NO_BUY_RSI_MIN = 58                                     # si RSI ya alto, no compras
 
-# --- Zonas de valor para comprar ---
-DEEP_BB = 0.26                                          # antes 0.21 (considera “deep” menos extremo)
-BB_ZONE_OK = 0.45                                       # antes 0.38 (más rango “comprable”)
-LOWER_WICK_BODY_RATIO = 1.10                            # antes 1.18 (acepta martillos menos perfectos)
+# --- Zonas de valor para comprar (más profundas = mejor R/R) ---
+DEEP_BB = 0.18                                          # “deep value” real
+BB_ZONE_OK = 0.34                                       # solo zona baja razonable
+LOWER_WICK_BODY_RATIO = 1.22                            # vela de giro (mecha inferior clara)
 
-# --- Reglas de compra específicas ---
+# --- Reglas de compra específicas (más confirmación) ---
 # A) Mínimo local
-A_LL10_MULT = 1.010                                     # antes 1.006 (menos exigente para detectar valle)
-A_RSI_PREV_MAX = 55                                     # antes 50
+A_LL10_MULT = 1.004                                     # valle más “real”
+A_RSI_PREV_MAX = 48                                     # venía sobrevendido / débil antes del giro
 
-# C) StochRSI en sobreventa
-C_STOCH_MAX = 40                                        # antes 32 (más entradas por rebote)
+# C) StochRSI en sobreventa (más selectivo)
+C_STOCH_MAX = 26                                        # sobreventa más dura
 
-# D) Capitulación
-D_PCT1_MAX = -3.1                                       # antes -2.6 (capitulación algo más profunda)
-D_PCT3_MAX = -7.2                                       # antes -6.0
-D_BB_PERCENT_MAX = 0.08                                 # antes 0.06
-D_TAIL_ATR_MULT = 0.95                                  # antes 1.10 (no exigir mecha tan extrema)
+# D) Capitulación (solo si es capitulación “de verdad”)
+D_PCT1_MAX = -2.9
+D_PCT3_MAX = -6.5
+D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferior
+D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
 
-# E) Pullback a EMA8
-E_RSI_MIN = 50                                          # antes 53 (deja entrar pullbacks con menos fuerza)
-E_LL10_MULT = 1.020                                     # antes 1.010 (más tolerancia a mínimos)
-E_BB_MID_MULT = 1.002                                   # antes 0.998 (no exigir estar tan por debajo del mid)
+# E) Pullback a EMA8 (más exigente)
+E_RSI_MIN = 55                                          # pullback solo con fuerza real
+E_LL10_MULT = 1.008
+E_BB_MID_MULT = 0.996
 
-# F) Doble toque en valle
-F_BB_PERCENT_MAX = 0.38                                 # antes 0.32
-F_LL10_UPPER = 1.012                                    # antes 1.008
-F_LL10_LOWER = 0.985                                    # antes 0.988
+# F) Doble toque en valle (más selectivo)
+F_BB_PERCENT_MAX = 0.28
+F_LL10_UPPER = 1.006
+F_LL10_LOWER = 0.990
 
-# --- Ventas ---
-REJECT_UPPER_ATR_MULT = 0.90                            # antes 1.00 (detecta rechazo con menos mecha)
-REJECT_WICK_BODY_RATIO = 1.15                           # antes 1.25
-SELL_RSI_PEAK = 70                                      # antes 73
-SELL_RSI_REJECT = 64                                    # antes 67
-SELL_RSI_HH_EMA = 64                                    # antes 67
-SELL_RSI_WICK = 64                                      # antes 67
+# --- Ventas (más “premium”: vender en rechazo fuerte / giro real) ---
+REJECT_UPPER_ATR_MULT = 1.05
+REJECT_WICK_BODY_RATIO = 1.30
+SELL_RSI_PEAK = 74
+SELL_RSI_REJECT = 68
+SELL_RSI_HH_EMA = 68
+SELL_RSI_WICK = 68
 
-# --- Crash-guard (ligeramente menos “paranoico”) ---
-CRASH_FAST_DROP_EMA8 = 0.987                            # antes 0.989 (debe caer un pelín más para saltar)
-CRASH_FAST_DROP_PCT1 = -1.2                             # antes -0.9
-CRASH_ATR_BREAK_MULT = 1.7                              # antes 1.6 (rompimiento más claro)
-CRASH_ADX_MIN = 24                                      # antes 25
-CRASH_RSI_MAX = 49                                      # antes 51
+# --- Crash-guard (más protector: evita quedarte atrapado) ---
+CRASH_FAST_DROP_EMA8 = 0.990
+CRASH_FAST_DROP_PCT1 = -0.8
+CRASH_ATR_BREAK_MULT = 1.55
+CRASH_ADX_MIN = 26
+CRASH_RSI_MAX = 50
 
 # --- Timeframe y arranque ---
 TIMEFRAME = '5m'
-STARTUP_CANDLES = 120
+STARTUP_CANDLES = 160                                  # más contexto = señales más fiables
 
-# --- Bollinger config ---
-BB40_WINDOW = 40
-BB40_STDS = 2.1                                         # antes 2.2 (un pelín más sensible)
+# --- Bollinger config (un pelín más “tenso” para detectar extremos reales) ---
+BB40_WINDOW = 45
+BB40_STDS = 2.25
 BB20_WINDOW = 20
-BB20_STDS = 2.1                                         # antes 2.2
+BB20_STDS = 2.25
 
-# --- Anti-chase (la clave: estaba demasiado estricto y te bloquea “oportunidades”) ---
-MAX_PCT_UP_1 = 1.2                                      # antes 0.5
-MAX_PCT_UP_3 = 3.2                                      # antes 1.5
-MAX_GREEN_STREAK = 4                                    # antes 3 (no bloquea tan pronto)
-BUY_BELOW_EMA20_MULT = 1.002                            # antes 0.999 (permite entrar cerca/ligeramente encima)
-BUY_BELOW_BB_MID_MULT = 1.002                           # antes 0.999
-BB_EXPANDING_HIGH = 0.55                                # antes 0.45 (menos bloqueo en expansión arriba)
-PUMP_VOL_MULT = 2.4                                     # antes 2.0 (solo bloquea pumps más claros)
-NEAR_HH_DISTANCE = 0.012                                # antes 0.0300 (no bloquea por estar “cerca” de HH)
-REQUIRE_RED_PULLBACK = False
+# --- Anti-chase (más duro: NO perseguir pumps) ---
+MAX_PCT_UP_1 = 0.45
+MAX_PCT_UP_3 = 1.25
+MAX_GREEN_STREAK = 3
+BUY_BELOW_EMA20_MULT = 0.998                            # exige estar por debajo de EMA20
+BUY_BELOW_BB_MID_MULT = 0.998                           # exige estar por debajo de BB mid
+BB_EXPANDING_HIGH = 0.42                                # si expansión arriba, no compras
+PUMP_VOL_MULT = 1.9                                     # bloquea pumps “temprano”
+NEAR_HH_DISTANCE = 0.028                                # no comprar cerca del máximo reciente
+REQUIRE_RED_PULLBACK = True                             # exige pausa/pullback antes de entrar
 
 
 
