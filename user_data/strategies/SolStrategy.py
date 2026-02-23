@@ -93,7 +93,7 @@ def bb_percent(df: DataFrame) -> DataFrame:
     return df
 
 
-class MyStrategy(IStrategy):
+class SolStrategy(IStrategy):
     """
     SOL v1 (5m + 1h):
     - 1h: determina régimen (tendencia / bajista / rango)
