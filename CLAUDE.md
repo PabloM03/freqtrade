@@ -9,7 +9,7 @@ This is a **freqtrade** crypto trading bot configured for Binance spot trading w
 **Current config summary:**
 - Exchange: Binance (spot, USDC)
 - Pairs: SOL, PEPE, DOGE, SHIB, BONK, WIF, TURBO, LTC (against USDC)
-- Timeframe: 5m
+- Timeframe: **1h** (migrated from 5m)
 - Max open trades: 3 | Stake: 25 USDC
 - Dry-run: enabled (1000 USDC simulated wallet)
 - API server: `0.0.0.0:8080`
@@ -27,7 +27,7 @@ freqtrade trade -c config.json
 freqtrade backtesting -c config.json -s MyStrategy --timerange 20240101-20241231
 
 # Download historical data
-freqtrade download-data -c config.json --timeframes 5m 1h
+freqtrade download-data -c config.json --timeframes 1h
 
 # Hyperopt (parameter optimization)
 freqtrade hyperopt -c config.json -s MyStrategy --spaces buy sell stoploss trailing --epochs 300
@@ -72,12 +72,18 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - `custom_exit(...)` — advanced exit conditions (return reason string or None)
 
 ### Active strategy: `CombinedBinHAndCluc.py`
-Low-frequency, high-probability strategy targeting structural support levels. Key design:
-- **6 entry conditions (A–F):** local minimum reversals, BB re-entries, StochRSI oversold, capitulation patterns, EMA8 pullbacks, double-touch in value zone
+Low-frequency, high-probability **1h reversal** strategy targeting structural support levels. Key design:
+- **6 entry conditions (A–F):** local minimum reversals (deep BB zone + MACD>0), BB re-entries, StochRSI oversold, capitulation patterns, EMA8 pullbacks, RSI extreme
+- **Triple trend filter:** EMA50 not falling >1.5% in 48h + EMA20 not falling >1% in 24h + close within 2.2% of EMA50 (blocks deep downtrend entries)
 - **Anti-chase filters:** blocks entries on pumps, breakouts, or near recent highs
-- **ATR-based adaptive trailing stop:** switches multipliers based on ADX strength and ROC momentum
+- **Custom exits:** crash guard, hard_tp (50%), peak exits, HH+EMA8 break, momentum fade
 - **Crash guard:** detects sudden drops and exits early
 - **All tunable parameters** are global constants at the top of the file (e.g. `FEE_RATE`, `STOPLOSS_ABS`, `HARD_TP`)
+
+**Backtest results (1h, with 25 USDC stake on 1000 USDC wallet):**
+- 2024 (9 months, market +33%): 6 trades, 33% WR, -1.35 USDC (-0.14%), DD 0.40%
+- 2025 (12 months, market -64%): 5 trades, 60% WR, +19.99 USDC (+2.0%), DD 0.16%, Sortino 571
+- Combined: +18.64 USDC over 21 months — capital-preserving with strong bear-market alpha
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
