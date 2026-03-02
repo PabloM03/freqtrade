@@ -1,0 +1,61 @@
+{
+  "strategy_name": "claudeStrategy",
+  "params": {
+    "roi": {
+      "0": 10.0
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 3
+    },
+    "buy": {
+      "a_ll10_mult": 1.008,
+      "a_rsi_prev_max": 50,
+      "bb_zone_ok": 0.48,
+      "c_stoch_max": 39,
+      "cooldown_bars": 1,
+      "d_bb_pct_max": 0.115,
+      "d_pct1_max": -4.6,
+      "d_pct3_max": -4.4,
+      "d_tail_atr": 1.67,
+      "deep_bb": 0.28,
+      "e_bb_mid_mult": 1.002,
+      "e_ll10_mult": 1.017,
+      "e_rsi_min": 52,
+      "f_bb_pct_max": 0.33,
+      "f_ll10_lower": 0.983,
+      "f_ll10_upper": 1.014,
+      "hard_tp": 0.032,
+      "hh_ema_min_profit": 0.022,
+      "lower_wick_ratio": 1.69,
+      "no_buy_rsi_min": 50,
+      "pct1_min": -2.4,
+      "pct3_min": -6.3,
+      "peak_min_profit": 0.025
+    },
+    "sell": {
+      "crash_adx_min": 29,
+      "crash_atr_mult": 2.17,
+      "crash_ema_mult": 0.988,
+      "crash_pct1": -1.2,
+      "crash_rsi_max": 48,
+      "reject_atr_mult": 0.63,
+      "reject_wick_ratio": 1.53,
+      "sell_rsi_hh_ema": 55,
+      "sell_rsi_peak": 74,
+      "sell_rsi_reject": 63,
+      "sell_rsi_wick": 67
+    },
+    "protection": {},
+    "stoploss": {
+      "stoploss": -0.05
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-02-27 22:36:47.058400+00:00"
+}

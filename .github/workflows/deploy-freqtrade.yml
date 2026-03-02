@@ -5,7 +5,8 @@ on:
     branches: [ "develop" ]
     paths-ignore:
       - "README.md"
-      - "**/*.md"
+      - "CLAUDE.md"
+      - ".claude/**"
   workflow_dispatch: {}
 
 jobs:
@@ -41,11 +42,17 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
-          RSYNC_EXCLUDES="--exclude .git/ --exclude .github/ --exclude .gitignore \
+          RSYNC_EXCLUDES="--exclude .git/ \
+                          --exclude .github/ \
+                          --exclude .gitignore \
                           --exclude config.json \
                           --exclude logs/ \
-                          --exclude **/__pycache__/"
-          rsync -az $RSYNC_EXCLUDES \
+                          --exclude __pycache__/ \
+                          --exclude */__pycache__/ \
+                          --exclude CLAUDE.md \
+                          --exclude .claude/ \
+                          --exclude .claude/**"
+          rsync -az --delete $RSYNC_EXCLUDES \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
