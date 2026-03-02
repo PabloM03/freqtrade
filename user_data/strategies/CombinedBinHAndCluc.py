@@ -47,7 +47,7 @@ NO_BUY_RSI_MIN = 58                                     # si RSI ya alto, no com
 
 # --- Zonas de valor para comprar (más profundas = mejor R/R) ---
 DEEP_BB = 0.18                                          # “deep value” real
-BB_ZONE_OK = 0.34                                       # solo zona baja razonable
+BB_ZONE_OK = 0.50                                       # zona baja razonable (relajado para más señales)
 LOWER_WICK_BODY_RATIO = 1.22                            # vela de giro (mecha inferior clara)
 
 # --- Reglas de compra específicas (más confirmación) ---
@@ -56,7 +56,7 @@ A_LL10_MULT = 1.004                                     # valle más “real”
 A_RSI_PREV_MAX = 48                                     # venía sobrevendido / débil antes del giro
 
 # C) StochRSI en sobreventa (más selectivo)
-C_STOCH_MAX = 26                                        # sobreventa más dura
+C_STOCH_MAX = 30                                        # sobreventa clara (más señales)
 
 # D) Capitulación (solo si es capitulación “de verdad”)
 D_PCT1_MAX = -2.9
@@ -108,7 +108,7 @@ BUY_BELOW_BB_MID_MULT = 0.998                           # exige estar por debajo
 BB_EXPANDING_HIGH = 0.42                                # si expansión arriba, no compras
 PUMP_VOL_MULT = 1.9                                     # bloquea pumps “temprano”
 NEAR_HH_DISTANCE = 0.028                                # no comprar cerca del máximo reciente
-REQUIRE_RED_PULLBACK = True                             # exige pausa/pullback antes de entrar
+REQUIRE_RED_PULLBACK = False                            # no exigir vela roja previa (demasiado restrictivo)
 
 
 def bollinger_bands(stock_price, window_size, num_of_std):
@@ -137,10 +137,11 @@ class MyStrategy(IStrategy):
     timeframe = TIMEFRAME
     startup_candle_count = STARTUP_CANDLES
 
-    use_sell_signal = False
-    sell_profit_only = True
-    ignore_roi_if_buy_signal = True
+    use_exit_signal = True
+    exit_profit_only = False
+    ignore_roi_if_entry_signal = True
     trailing_stop = False
+    use_custom_stoploss = False
     minimal_roi = {"0": 10.0}
     MIN_HOLD_BARS = 3
 
@@ -302,8 +303,8 @@ class MyStrategy(IStrategy):
 
         return dataframe
 
-    # ---------------------- COMPRAS (bajadas más óptimas) ----------------------
-    def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    # ---------------------- ENTRADAS (bajadas más óptimas) ----------------------
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         anti_cuchillo = (
             (dataframe['pct_1'] > self.PCT1_MIN) &
             (dataframe['pct_3'] > self.PCT3_MIN) &
@@ -321,54 +322,44 @@ class MyStrategy(IStrategy):
         )
 
         # Zonas de valor
-        deep_bb    = (dataframe['bb_percent'] <= self.DEEP_BB)
         bb_zone_ok = (dataframe['bb_percent'] <= self.BB_ZONE_OK)
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > self.LOWER_WICK_BODY_RATIO * body
 
-
         # Bloqueo de compras en subidas/picos (anti-chase)
         anti_chase = (
-            # No perseguir velas verdes muy fuertes (1 y 3 velas)
             (dataframe['pct_1'] < MAX_PCT_UP_1) &
             (dataframe['pct_3'] < MAX_PCT_UP_3) &
-            # Evitar rachas de verdes consecutivas
             (dataframe['green_streak'] < MAX_GREEN_STREAK) &
-            # Evitar compras arriba con bandas expandiéndose
             (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & (dataframe['bb_expanding']))) &
-            # Evitar compras en pumps de volumen + vela verde fuerte
             (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
-            # Exigir estar por debajo de referencias medias
             (dataframe['close'] <= dataframe['ema_fast'] * BUY_BELOW_EMA20_MULT) &
             (dataframe['close'] <= dataframe['bb_middleband'] * BUY_BELOW_BB_MID_MULT) &
-            # Evitar compras pegadas a los máximos recientes
             (~dataframe['near_hh'])
         )
 
-        if REQUIRE_RED_PULLBACK:
-            anti_chase = anti_chase & (
-                # pequeña pausa: vela roja o al menos barrido de mínimos vs cierre previo
-                (dataframe['close'] <= dataframe['open']) |
-                (dataframe['low'] < dataframe['close'].shift(1))
-            )
+        base_filter = anti_cuchillo & ~no_buy_high & anti_chase
 
-
-        # A) Mínimo local + giro RSI + martillo/volumen (bajada óptima)
+        # A) Mínimo local + giro RSI + volumen (zona baja BB, confirmación estricta)
+        bb_low_zone = (dataframe['bb_percent'] <= 0.32)   # zona baja real (32% inferior de BB)
         A = (
             (dataframe['loc_trough']) &
-            ((dataframe['low'] <= dataframe['ll_10'] * self.A_LL10_MULT) | deep_bb) &
+            (dataframe['low'] <= dataframe['ll_10'] * self.A_LL10_MULT) &
+            bb_low_zone &
             (dataframe['rsi_prev'] < self.A_RSI_PREV_MAX) & (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
-            (hammerish | dataframe['vol_spike'])
+            dataframe['vol_spike'] &
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1))  # MACD no empeora (momentum girando)
         )
 
-        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro (clásico y muy abajo)
+        # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro
         B = (
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD girando (no en caída libre)
             (bb_zone_ok)
         )
 
@@ -378,10 +369,11 @@ class MyStrategy(IStrategy):
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
             (dataframe['stoch_k'] < self.C_STOCH_MAX) & (dataframe['stoch_d'] < self.C_STOCH_MAX) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
+            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(12)) &  # EMA20 no bajando en última hora (anti-bear)
             (bb_zone_ok)
         )
 
-        # D) Capitulación: vela muy roja previa / colas largas + rebote verde
+        # D) Capitulación: caída fuerte + cola larga + rebote verde (con filtros de seguridad)
         D = (
             ((dataframe['pct_1'] <= self.D_PCT1_MAX) | (dataframe['pct_3'] <= self.D_PCT3_MAX)) &
             (dataframe['bb_percent'] <= self.D_BB_PERCENT_MAX) &
@@ -401,23 +393,49 @@ class MyStrategy(IStrategy):
             (dataframe['vol_spike'] | hammerish)
         )
 
-        # F) Doble toque / higher-low sutil en zona baja (confirmación de valle)
-        F = (
-            (dataframe['bb_percent'] <= self.F_BB_PERCENT_MAX) &
-            (dataframe['low'] <= dataframe['ll_10'] * self.F_LL10_UPPER) &
-            (dataframe['low'] >= dataframe['ll_10'].shift(1) * self.F_LL10_LOWER) &
-            (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['close'] >= dataframe['open'])
+# Filtro de tendencia: EMA50 debe estar subiendo en las últimas 2h (24 velas de 5m)
+        # Evita comprar en tendencias bajistas sostenidas
+        ema50_ok = (
+            (dataframe['ema_slow'] >= dataframe['ema_slow'].shift(24) * 0.997)
         )
 
-        dataframe.loc[
-            (((A | B | C | D | E | F) & anti_cuchillo & ~no_buy_high & anti_chase) | D),
-            'buy'
-        ] = 1
+        # D necesita filtro propio: anti_cuchillo sin restricción de pct_1
+        # (la capitulación ES una caída fuerte, conflicto con PCT1_MIN)
+        anti_cuchillo_D = (
+            (~dataframe['cooldown'].astype(bool)) &
+            (dataframe['volume'] > 0)
+        )
+        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok
+
+        # base_filter completo con filtro de tendencia
+        base_filter_trend = base_filter & ema50_ok
+
+        # Calcular máscaras una sola vez para evitar el bug de re-evaluación
+        mask_A = A & base_filter_trend
+        mask_B = B & base_filter_trend & ~mask_A
+        mask_C = C & base_filter_trend & ~mask_A & ~mask_B
+        mask_D = D & base_filter_D & ~mask_A & ~mask_B & ~mask_C
+        mask_E = E & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D
+
+        dataframe.loc[mask_A, 'enter_long'] = 1
+        dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
+
+        dataframe.loc[mask_B, 'enter_long'] = 1
+        dataframe.loc[mask_B, 'enter_tag'] = 'B_bb_reentry'
+
+        dataframe.loc[mask_C, 'enter_long'] = 1
+        dataframe.loc[mask_C, 'enter_tag'] = 'C_stochrsi'
+
+        dataframe.loc[mask_D, 'enter_long'] = 1
+        dataframe.loc[mask_D, 'enter_tag'] = 'D_capitulation'
+
+        dataframe.loc[mask_E, 'enter_long'] = 1
+        dataframe.loc[mask_E, 'enter_tag'] = 'E_ema8_pullback'
+
         return dataframe
 
-    # ---------------------- VENTAS (picos más óptimos) ----------------------
-    def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    # ---------------------- SALIDAS (señal de venta como respaldo) ----------------------
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Rechazo fuerte cerca de banda superior (mecha y RSI alto)
         reject_upper = (
             (dataframe['upper_wick'] >= dataframe['atr'] * self.REJECT_UPPER_ATR_MULT) &
@@ -439,7 +457,6 @@ class MyStrategy(IStrategy):
             )
             |
             (
-                # Máximo del rango + ruptura EMA8 posterior con MACD debilitando
                 (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
                 (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
                 (dataframe['close'] < dataframe['ema8']) &
@@ -448,7 +465,7 @@ class MyStrategy(IStrategy):
             )
             |
             reject_upper,
-            'sell'
+            'exit_long'
         ] = 1
         return dataframe
 
@@ -556,7 +573,9 @@ class MyStrategy(IStrategy):
         **kwargs
     ) -> float:
         if current_profit is None or current_profit < 0.03:
-            return self.stoploss
+            # stoploss_from_open fija el stop en open-5% independientemente del precio actual
+            # Evita que el stop suba mientras el trade está en pérdidas o beneficio mínimo
+            return stoploss_from_open(current_profit if current_profit else 0.0, abs(self.stoploss))
 
         try:
             df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
