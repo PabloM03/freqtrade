@@ -42,7 +42,7 @@ COOLDOWN_BARS = 3                                      # tras vela roja grande, 
 
 # --- Filtro de compras altas (más estricto: no comprar arriba) ---
 NO_BUY_BB_MULT = 1.003                                 # si está por encima del mid BB -> sospechoso
-NO_BUY_EMA20_MULT = 1.003                               # si está por encima de EMA20 -> sospechoso
+NO_BUY_EMA20_MULT = 1.003                              # si está por encima de EMA20 -> sospechoso
 NO_BUY_RSI_MIN = 58                                     # si RSI ya alto, no compras
 
 # --- Zonas de valor para comprar (más profundas = mejor R/R) ---
@@ -109,7 +109,6 @@ BB_EXPANDING_HIGH = 0.42                                # si expansión arriba, 
 PUMP_VOL_MULT = 1.9                                     # bloquea pumps “temprano”
 NEAR_HH_DISTANCE = 0.028                                # no comprar cerca del máximo reciente
 REQUIRE_RED_PULLBACK = True                             # exige pausa/pullback antes de entrar
-
 
 
 def bollinger_bands(stock_price, window_size, num_of_std):

@@ -1,21 +1,28 @@
 # Freqtrade rules
 config*.json
-# *.sqlite
-# *.sqlite-shm
-# *.sqlite-wal
-# logfile.txt
-# user_data/*
-# !user_data/strategy/sample_strategy.py
-# !user_data/notebooks
-# !user_data/models
-# !user_data/freqaimodels
-# user_data/freqaimodels/*
-# user_data/models/*
-# user_data/notebooks/*
-# freqtrade-plot.html
-# freqtrade-profit-plot.html
-# freqtrade/rpc/api_server/ui/*
-# build_helpers/ta-lib/*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+logfile.txt
+freqtrade-plot.html
+freqtrade-profit-plot.html
+freqtrade/rpc/api_server/ui/*
+build_helpers/ta-lib/*
+
+# Historical data (large binary files, no need to version)
+user_data/data/binance/
+user_data/data/kraken/
+user_data/data/kucoin/
+user_data/data/*.feather
+user_data/data/*.json.gz
+
+# Backtest results (regenerable, can be large)
+user_data/backtest_results/*.zip
+user_data/backtest_results/*.json
+!user_data/backtest_results/.gitkeep
+
+# Hyperopt results
+user_data/hyperopt_results/
 
 # Macos related
 .DS_Store
