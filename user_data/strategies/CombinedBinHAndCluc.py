@@ -20,25 +20,25 @@ from freqtrade.persistence import Trade
 FEE_RATE = 0.001
 SLIPPAGE_BUFFER = 0.0007
 MIN_PROFIT_NET = 7 * FEE_RATE + SLIPPAGE_BUFFER      # exige beneficio real antes de permitir salidas
-PEAK_MIN_PROFIT = 0.015                               # vender solo en picos bien formados
-HH_EMA_MIN_PROFIT = 0.018                             # salida HH + ruptura EMA8 más exigente
-HARD_TP = 0.055                                       # busca swings buenos (no scalps)
+PEAK_MIN_PROFIT = 0.030                               # vender en picos bien formados (1h swing)
+HH_EMA_MIN_PROFIT = 0.040                             # salida HH + ruptura EMA8 (1h swing)
+HARD_TP = 0.50                                        # TP 50% — safety net para movimientos extremos
 
-# --- Stoploss y trailing (más “dejar correr”, pero controlado) ---
-STOPLOSS_ABS = -0.050                                 # recorta trades malos antes
+# --- Stoploss y trailing (más margen para ruido de 1h) ---
+STOPLOSS_ABS = -0.065                                 # SL 6.5% — 1h necesita más espacio
 TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
 TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
-TRAIL_DIST_MIN = 0.022
-TRAIL_DIST_MAX = 0.070
-TRAIL_VERTICAL_MIN = 0.030
+TRAIL_DIST_MIN = 0.040
+TRAIL_DIST_MAX = 0.120
+TRAIL_VERTICAL_MIN = 0.060
 ADX_STRONG_TREND = 27                                  # tendencia fuerte de verdad
 ROC5_VERTICAL = 3.0                                    # vertical-rally solo si es claro
 FALLBACK_TRAIL_DIST = 0.028
 
 # --- Anti-cuchillo (más estricto: evita comprar “cayendo”) ---
-PCT1_MIN = -2.4                                        # no comprar si la última vela cae demasiado
-PCT3_MIN = -5.5                                        # no comprar si el tramo corto es feo
-COOLDOWN_BARS = 3                                      # tras vela roja grande, espera más
+PCT1_MIN = -4.0                                        # 1h: caídas de hasta -4% son normales
+PCT3_MIN = -10.0                                       # 1h: -10% en 3h = drop muy severo
+COOLDOWN_BARS = 2                                      # 2 horas de cooldown tras vela roja grande
 
 # --- Filtro de compras altas (más estricto: no comprar arriba) ---
 NO_BUY_BB_MULT = 1.003                                 # si está por encima del mid BB -> sospechoso
@@ -47,20 +47,20 @@ NO_BUY_RSI_MIN = 58                                     # si RSI ya alto, no com
 
 # --- Zonas de valor para comprar (más profundas = mejor R/R) ---
 DEEP_BB = 0.18                                          # “deep value” real
-BB_ZONE_OK = 0.50                                       # zona baja razonable (relajado para más señales)
+BB_ZONE_OK = 0.55                                       # 1h: zona media-baja (señales más contextuales)
 LOWER_WICK_BODY_RATIO = 1.22                            # vela de giro (mecha inferior clara)
 
 # --- Reglas de compra específicas (más confirmación) ---
 # A) Mínimo local
 A_LL10_MULT = 1.004                                     # valle más “real”
-A_RSI_PREV_MAX = 48                                     # venía sobrevendido / débil antes del giro
+A_RSI_PREV_MAX = 52                                     # 1h: RSI<52 antes del giro es válido
 
-# C) StochRSI en sobreventa (más selectivo)
-C_STOCH_MAX = 30                                        # sobreventa clara (más señales)
+# C) StochRSI en sobreventa
+C_STOCH_MAX = 40                                        # 1h: sobreventa en StochRSI<40
 
-# D) Capitulación (solo si es capitulación “de verdad”)
-D_PCT1_MAX = -2.9
-D_PCT3_MAX = -6.5
+# D) Capitulación (solo si es capitulación “de verdad” en 1h)
+D_PCT1_MAX = -4.5
+D_PCT3_MAX = -9.0
 D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferior
 D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
 
@@ -69,10 +69,12 @@ E_RSI_MIN = 55                                          # pullback solo con fuer
 E_LL10_MULT = 1.008
 E_BB_MID_MULT = 0.996
 
-# F) Doble toque en valle (más selectivo)
-F_BB_PERCENT_MAX = 0.28
-F_LL10_UPPER = 1.006
-F_LL10_LOWER = 0.990
+# F) RSI muy sobrevendido + rebote (en 1h tiene más contexto = más válido)
+F_RSI_MAX = 30                                          # RSI < 30 en 1h = sobreventa significativa
+
+# G) Hammer en zona baja con volumen (alta frecuencia)
+G_BB_ZONE = 0.45                                        # en zona baja BB
+G_VOL_MULT = 1.5                                        # volumen mínimo para hammer válido
 
 # --- Ventas (más “premium”: vender en rechazo fuerte / giro real) ---
 REJECT_UPPER_ATR_MULT = 1.05
@@ -84,14 +86,14 @@ SELL_RSI_WICK = 68
 
 # --- Crash-guard (más protector: evita quedarte atrapado) ---
 CRASH_FAST_DROP_EMA8 = 0.990
-CRASH_FAST_DROP_PCT1 = -0.8
+CRASH_FAST_DROP_PCT1 = -2.5
 CRASH_ATR_BREAK_MULT = 1.55
 CRASH_ADX_MIN = 26
 CRASH_RSI_MAX = 50
 
 # --- Timeframe y arranque ---
-TIMEFRAME = '5m'
-STARTUP_CANDLES = 160                                  # más contexto = señales más fiables
+TIMEFRAME = '1h'
+STARTUP_CANDLES = 80                                   # 80 velas de 1h = ~3.3 días de contexto
 
 # --- Bollinger config (un pelín más “tenso” para detectar extremos reales) ---
 BB40_WINDOW = 45
@@ -100,14 +102,14 @@ BB20_WINDOW = 20
 BB20_STDS = 2.25
 
 # --- Anti-chase (más duro: NO perseguir pumps) ---
-MAX_PCT_UP_1 = 0.45
-MAX_PCT_UP_3 = 1.25
-MAX_GREEN_STREAK = 3
+MAX_PCT_UP_1 = 1.5                                     # 1h: hasta 1.5% sube en una hora es normal
+MAX_PCT_UP_3 = 4.0                                     # 1h: no comprar si +4% en 3 horas
+MAX_GREEN_STREAK = 3                                    # no más de 3 velas verdes seguidas
 BUY_BELOW_EMA20_MULT = 0.998                            # exige estar por debajo de EMA20
 BUY_BELOW_BB_MID_MULT = 0.998                           # exige estar por debajo de BB mid
 BB_EXPANDING_HIGH = 0.42                                # si expansión arriba, no compras
-PUMP_VOL_MULT = 1.9                                     # bloquea pumps “temprano”
-NEAR_HH_DISTANCE = 0.028                                # no comprar cerca del máximo reciente
+PUMP_VOL_MULT = 1.9                                     # bloquea pumps "temprano"
+NEAR_HH_DISTANCE = 0.028                                # no comprar cerca del máximo reciente (20 barras)
 REQUIRE_RED_PULLBACK = False                            # no exigir vela roja previa (demasiado restrictivo)
 
 
@@ -169,9 +171,9 @@ class MyStrategy(IStrategy):
     E_RSI_MIN = E_RSI_MIN
     E_LL10_MULT = E_LL10_MULT
     E_BB_MID_MULT = E_BB_MID_MULT
-    F_BB_PERCENT_MAX = F_BB_PERCENT_MAX
-    F_LL10_UPPER = F_LL10_UPPER
-    F_LL10_LOWER = F_LL10_LOWER
+    F_RSI_MAX = F_RSI_MAX
+    G_BB_ZONE = G_BB_ZONE
+    G_VOL_MULT = G_VOL_MULT
 
     # Ventas
     REJECT_UPPER_ATR_MULT = REJECT_UPPER_ATR_MULT
@@ -303,8 +305,9 @@ class MyStrategy(IStrategy):
 
         return dataframe
 
-    # ---------------------- ENTRADAS (bajadas más óptimas) ----------------------
+    # ---------------------- ENTRADAS (alta frecuencia, filtros relajados) ----------------------
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Anti-cuchillo: no comprar si caída en curso, bearish direccional, o volumen cero
         anti_cuchillo = (
             (dataframe['pct_1'] > self.PCT1_MIN) &
             (dataframe['pct_3'] > self.PCT3_MIN) &
@@ -314,21 +317,21 @@ class MyStrategy(IStrategy):
             (dataframe['volume'] > 0)
         )
 
-        # Evitar compras “arriba” (requiere las 3 a la vez)
+        # Evitar compras “arriba” (requiere las 3 a la vez — muy permisivo)
         no_buy_high = (
             (dataframe['close'] > dataframe['bb_middleband'] * self.NO_BUY_BB_MULT) &
             (dataframe['close'] > dataframe['ema_fast'] * self.NO_BUY_EMA20_MULT) &
-            (dataframe['rsi'] > self.NO_BUY_RSI_MIN)
+            (dataframe['rsi'] > self.NO_BUY_RSI_MIN)        # RSI > 68
         )
 
-        # Zonas de valor
-        bb_zone_ok = (dataframe['bb_percent'] <= self.BB_ZONE_OK)
+        # Zonas de valor (relajadas)
+        bb_zone_ok = (dataframe['bb_percent'] <= self.BB_ZONE_OK)  # 65% inferior de BB
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
         hammerish  = lower_wick > self.LOWER_WICK_BODY_RATIO * body
 
-        # Bloqueo de compras en subidas/picos (anti-chase)
+        # Anti-chase: NO perseguir pumps ni comprar arriba
         anti_chase = (
             (dataframe['pct_1'] < MAX_PCT_UP_1) &
             (dataframe['pct_3'] < MAX_PCT_UP_3) &
@@ -342,16 +345,19 @@ class MyStrategy(IStrategy):
 
         base_filter = anti_cuchillo & ~no_buy_high & anti_chase
 
-        # A) Mínimo local + giro RSI + volumen (zona baja BB, confirmación estricta)
-        bb_low_zone = (dataframe['bb_percent'] <= 0.32)   # zona baja real (32% inferior de BB)
+        # A) Mínimo local + giro RSI + volumen + MACD (zona baja BB, 1h más contexto)
+        bb_low_zone = (dataframe['bb_percent'] <= 0.38)
+        bb_deep_zone = (dataframe['bb_percent'] <= 0.20)  # zona muy oversold para A
         A = (
             (dataframe['loc_trough']) &
             (dataframe['low'] <= dataframe['ll_10'] * self.A_LL10_MULT) &
-            bb_low_zone &
-            (dataframe['rsi_prev'] < self.A_RSI_PREV_MAX) & (dataframe['rsi'] > dataframe['rsi_prev']) &
+            bb_deep_zone &
+            (dataframe['rsi_prev'] < self.A_RSI_PREV_MAX) &    # < 52
+            (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
             dataframe['vol_spike'] &
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1))  # MACD no empeora (momentum girando)
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD girando
+            (dataframe['macdhist'] > 0)                                  # MACD positivo (momentum alcista real)
         )
 
         # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro
@@ -359,21 +365,22 @@ class MyStrategy(IStrategy):
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD girando (no en caída libre)
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + MACD no empeora + en zona baja BB
+        # C) StochRSI cruce en sobreventa + MACD + EMA20 no bajando
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < self.C_STOCH_MAX) & (dataframe['stoch_d'] < self.C_STOCH_MAX) &
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
-            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(12)) &  # EMA20 no bajando en última hora (anti-bear)
+            (dataframe['stoch_k'] < self.C_STOCH_MAX) &        # < 35
+            (dataframe['stoch_d'] < self.C_STOCH_MAX) &
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(4)) &  # EMA20 plana (4h en 1h TF)
             (bb_zone_ok)
         )
 
-        # D) Capitulación: caída fuerte + cola larga + rebote verde (con filtros de seguridad)
+        # D) Capitulación: caída fuerte + cola larga + rebote verde
         D = (
             ((dataframe['pct_1'] <= self.D_PCT1_MAX) | (dataframe['pct_3'] <= self.D_PCT3_MAX)) &
             (dataframe['bb_percent'] <= self.D_BB_PERCENT_MAX) &
@@ -393,21 +400,33 @@ class MyStrategy(IStrategy):
             (dataframe['vol_spike'] | hammerish)
         )
 
-# Filtro de tendencia: EMA50 debe estar subiendo en las últimas 2h (24 velas de 5m)
-        # Evita comprar en tendencias bajistas sostenidas
-        ema50_ok = (
-            (dataframe['ema_slow'] >= dataframe['ema_slow'].shift(24) * 0.997)
+        # F) RSI extremo (<25) + rebote + MACD girando (señal de capitulación selectiva)
+        F = (
+            (dataframe['rsi'] < self.F_RSI_MAX) &              # RSI < 25 (extremo)
+            (dataframe['rsi'] > dataframe['rsi_prev']) &        # RSI subiendo
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            dataframe['vol_spike'] &                            # volumen confirmado
+            (bb_zone_ok)
         )
 
-        # D necesita filtro propio: anti_cuchillo sin restricción de pct_1
-        # (la capitulación ES una caída fuerte, conflicto con PCT1_MIN)
+        # Filtro de tendencia triple:
+        # EMA50 no bajando más de 1.5% en 48h (tendencia media)
+        # EMA20 no bajando más de 1% en 24h (tendencia corta)
+        # Precio no más de 6% por debajo de EMA50 (no en downtrend profundo)
+        ema50_ok = (
+            (dataframe['ema_slow'] >= dataframe['ema_slow'].shift(48) * 0.985) &
+            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(24) * 0.990) &
+            (dataframe['close'] >= dataframe['ema_slow'] * 0.978)
+        )
+
+        # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
         anti_cuchillo_D = (
             (~dataframe['cooldown'].astype(bool)) &
             (dataframe['volume'] > 0)
         )
         base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok
 
-        # base_filter completo con filtro de tendencia
+        # base_filter con tendencia para A, B, C, E, F
         base_filter_trend = base_filter & ema50_ok
 
         # Calcular máscaras una sola vez para evitar el bug de re-evaluación
@@ -416,6 +435,7 @@ class MyStrategy(IStrategy):
         mask_C = C & base_filter_trend & ~mask_A & ~mask_B
         mask_D = D & base_filter_D & ~mask_A & ~mask_B & ~mask_C
         mask_E = E & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D
+        mask_F = F & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
 
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
@@ -431,6 +451,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_E, 'enter_long'] = 1
         dataframe.loc[mask_E, 'enter_tag'] = 'E_ema8_pullback'
+
+        dataframe.loc[mask_F, 'enter_long'] = 1
+        dataframe.loc[mask_F, 'enter_tag'] = 'F_rsi_extreme'
 
         return dataframe
 
@@ -471,7 +494,13 @@ class MyStrategy(IStrategy):
 
     # ---------------------- UTILIDADES ----------------------
     def _bars_elapsed(self, trade: Trade, current_time: datetime) -> int:
-        tf_minutes = int(self.timeframe.rstrip('m'))
+        tf = self.timeframe
+        if tf.endswith('h'):
+            tf_minutes = int(tf[:-1]) * 60
+        elif tf.endswith('m'):
+            tf_minutes = int(tf[:-1])
+        else:
+            tf_minutes = int(tf)
         seconds = (current_time - trade.open_date_utc).total_seconds()
         return int(max(0, seconds) // (tf_minutes * 60))
 
