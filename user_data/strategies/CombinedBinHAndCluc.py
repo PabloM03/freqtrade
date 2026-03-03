@@ -20,25 +20,25 @@ from freqtrade.persistence import Trade
 FEE_RATE = 0.001
 SLIPPAGE_BUFFER = 0.0007
 MIN_PROFIT_NET = 7 * FEE_RATE + SLIPPAGE_BUFFER      # exige beneficio real antes de permitir salidas
-PEAK_MIN_PROFIT = 0.030                               # vender en picos bien formados (1h swing)
-HH_EMA_MIN_PROFIT = 0.040                             # salida HH + ruptura EMA8 (1h swing)
-HARD_TP = 0.50                                        # TP 50% — safety net para movimientos extremos
+PEAK_MIN_PROFIT = 0.020                               # vender en picos bien formados (15m swing)
+HH_EMA_MIN_PROFIT = 0.025                             # salida HH + ruptura EMA8 (15m swing)
+HARD_TP = 0.25                                        # TP 25% — safety net para movimientos extremos en 15m
 
-# --- Stoploss y trailing (más margen para ruido de 1h) ---
-STOPLOSS_ABS = -0.065                                 # SL 6.5% — 1h necesita más espacio
+# --- Stoploss y trailing (menos margen: candles de 15m tienen menos ruido) ---
+STOPLOSS_ABS = -0.035                                 # SL 3.5% — 15m tiene menos ruido que 1h
 TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
 TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
 TRAIL_DIST_MIN = 0.040
 TRAIL_DIST_MAX = 0.120
 TRAIL_VERTICAL_MIN = 0.060
 ADX_STRONG_TREND = 27                                  # tendencia fuerte de verdad
-ROC5_VERTICAL = 3.0                                    # vertical-rally solo si es claro
+ROC5_VERTICAL = 1.5                                    # vertical-rally en 15m: 5×15m=1.25h, 1.5% es claro
 FALLBACK_TRAIL_DIST = 0.028
 
-# --- Anti-cuchillo (más estricto: evita comprar “cayendo”) ---
-PCT1_MIN = -4.0                                        # 1h: caídas de hasta -4% son normales
-PCT3_MIN = -10.0                                       # 1h: -10% en 3h = drop muy severo
-COOLDOWN_BARS = 2                                      # 2 horas de cooldown tras vela roja grande
+# --- Anti-cuchillo (ajustado para 15m: candles más pequeñas) ---
+PCT1_MIN = -2.0                                        # 15m: caídas de hasta -2% son normales en un candle
+PCT3_MIN = -5.0                                        # 15m: -5% en 3 candles (45min) = drop muy severo
+COOLDOWN_BARS = 8                                      # 2h de cooldown (8 × 15m = 2h, igual que antes)
 
 # --- Filtro de compras altas (más estricto: no comprar arriba) ---
 NO_BUY_BB_MULT = 1.003                                 # si está por encima del mid BB -> sospechoso
@@ -56,11 +56,11 @@ A_LL10_MULT = 1.004                                     # valle más “real”
 A_RSI_PREV_MAX = 52                                     # 1h: RSI<52 antes del giro es válido
 
 # C) StochRSI en sobreventa
-C_STOCH_MAX = 40                                        # 1h: sobreventa en StochRSI<40
+C_STOCH_MAX = 25                                        # 15m: oversold selectivo (StochRSI<25 = sobreventa real en 3.5h, equivale a <40 en 1h)
 
-# D) Capitulación (solo si es capitulación “de verdad” en 1h)
-D_PCT1_MAX = -4.5
-D_PCT3_MAX = -9.0
+# D) Capitulación (solo si es capitulación “de verdad” en 15m)
+D_PCT1_MAX = -2.5
+D_PCT3_MAX = -5.0
 D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferior
 D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
 
@@ -86,24 +86,27 @@ SELL_RSI_WICK = 68
 
 # --- Crash-guard (más protector: evita quedarte atrapado) ---
 CRASH_FAST_DROP_EMA8 = 0.990
-CRASH_FAST_DROP_PCT1 = -2.5
+CRASH_FAST_DROP_PCT1 = -1.5
 CRASH_ATR_BREAK_MULT = 1.55
 CRASH_ADX_MIN = 26
 CRASH_RSI_MAX = 50
 
 # --- Timeframe y arranque ---
-TIMEFRAME = '1h'
-STARTUP_CANDLES = 80                                   # 80 velas de 1h = ~3.3 días de contexto
+TIMEFRAME = '15m'
+TF_MULT = 4                                            # multiplicador vs 1h: todos los períodos de indicadores ×4
+STARTUP_CANDLES = 500                                  # 500 velas: EMA200_ht(200) + MACD_slow(104) + shift(192) warmup
 
-# --- Bollinger config (un pelín más “tenso” para detectar extremos reales) ---
-BB40_WINDOW = 45
+# --- Bollinger config (ventanas escaladas ×4 para equivalencia temporal con 1h) ---
+# BB20@1h = 20h; BB80@15m = 80×15m = 20h (misma suavidad temporal)
+# BB45@1h = 45h; BB180@15m = 180×15m = 45h (misma suavidad temporal)
+BB40_WINDOW = 180
 BB40_STDS = 2.25
-BB20_WINDOW = 20
+BB20_WINDOW = 80
 BB20_STDS = 2.25
 
-# --- Anti-chase (más duro: NO perseguir pumps) ---
-MAX_PCT_UP_1 = 1.5                                     # 1h: hasta 1.5% sube en una hora es normal
-MAX_PCT_UP_3 = 4.0                                     # 1h: no comprar si +4% en 3 horas
+# --- Anti-chase (ajustado para 15m: candles más volátiles que 1h) ---
+MAX_PCT_UP_1 = 2.0                                     # 15m: hasta 2% en un candle es normal en altcoins
+MAX_PCT_UP_3 = 5.0                                     # 15m: no comprar si +5% en 45min (3 candles)
 MAX_GREEN_STREAK = 3                                    # no más de 3 velas verdes seguidas
 BUY_BELOW_EMA20_MULT = 0.998                            # exige estar por debajo de EMA20
 BUY_BELOW_BB_MID_MULT = 0.998                           # exige estar por debajo de BB mid
@@ -208,7 +211,9 @@ class MyStrategy(IStrategy):
 
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # BinHV45 (BB40)
+        m = TF_MULT  # multiplicador de períodos para equivalencia temporal vs 1h
+
+        # BinHV45 (BB40) — ya escalado via BB40_WINDOW=180 (45h equiv)
         mid, lower = bollinger_bands(
             dataframe['close'], window_size=self.BB40_WINDOW, num_of_std=self.BB40_STDS
         )
@@ -217,7 +222,7 @@ class MyStrategy(IStrategy):
         dataframe['closedelta'] = (dataframe['close'] - dataframe['close'].shift()).abs()
         dataframe['tail'] = (dataframe['close'] - dataframe['low']).abs()
 
-        # Bollinger 20
+        # Bollinger 20 — ya escalado via BB20_WINDOW=80 (20h equiv)
         tp = qtpylib.typical_price(dataframe)
         bb = qtpylib.bollinger_bands(tp, window=self.BB20_WINDOW, stds=self.BB20_STDS)
         dataframe['bb_lowerband']  = bb['lower']
@@ -228,46 +233,50 @@ class MyStrategy(IStrategy):
         dataframe['bb_percent'] = (dataframe['close'] - dataframe['bb_lowerband']) / denom
         dataframe['bb_expanding'] = (dataframe['bb_width'] > dataframe['bb_width'].shift(1))
 
-        # EMAs / fuerza
-        dataframe['ema8']     = ta.EMA(dataframe, timeperiod=8)
-        dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20)
-        dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50)
-        dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30).mean()
+        # EMAs / fuerza — períodos ×m para equivalencia temporal
+        dataframe['ema8']     = ta.EMA(dataframe, timeperiod=8 * m)    # 32 períodos = 8h equiv
+        dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=20 * m)   # 80 períodos = 20h equiv
+        dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=50 * m)   # 200 períodos = 50h equiv
+        # ema50_ht y ema20_ht coinciden con ema_slow y ema_fast ya escalados
+        dataframe['ema50_ht'] = dataframe['ema_slow']
+        dataframe['ema20_ht'] = dataframe['ema_fast']
+        dataframe['volume_mean_slow'] = dataframe['volume'].rolling(window=30 * m).mean()  # 120 períodos = 30h
         dataframe['ema8_slope_up'] = dataframe['ema8'] > dataframe['ema8'].shift(1)
 
-        # RSI / ADX / DI
+        # RSI — período original (14) para mayor reactividad a 15m: detecta giros en 3.5h como RSI14@1h en 14h
+        # ADX/DI — escalado ×m: mide fuerza de tendencia sobre ventana temporal equivalente (14h)
         dataframe['rsi']      = ta.RSI(dataframe, timeperiod=14)
         dataframe['rsi_prev'] = dataframe['rsi'].shift(1)
-        dataframe['adx']      = ta.ADX(dataframe, timeperiod=14)
-        dataframe['plus_di']  = ta.PLUS_DI(dataframe, timeperiod=14)
-        dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14)
+        dataframe['adx']      = ta.ADX(dataframe, timeperiod=14 * m)
+        dataframe['plus_di']  = ta.PLUS_DI(dataframe, timeperiod=14 * m)
+        dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14 * m)
 
-        # StochRSI
+        # StochRSI — período original para mayor reactividad: cruces de sobreventa más frecuentes
         stoch = ta.STOCHRSI(dataframe, timeperiod=14, fastk_period=3, fastd_period=3)
         dataframe['stoch_k'] = stoch['fastk']
         dataframe['stoch_d'] = stoch['fastd']
         dataframe['stoch_k_prev'] = dataframe['stoch_k'].shift(1)
         dataframe['stoch_d_prev'] = dataframe['stoch_d'].shift(1)
 
-        # MACD
+        # MACD — período original (12/26/9) para reactividad: capta giros de momentum en 3-6h
         macd = ta.MACD(dataframe, fastperiod=12, slowperiod=26, signalperiod=9)
         dataframe['macd']      = macd['macd']
         dataframe['macdsignal']= macd['macdsignal']
         dataframe['macdhist']  = macd['macdhist']
 
-        # Momentum/extremos
-        dataframe['roc5'] = ta.ROC(dataframe, timeperiod=5)
-        dataframe['ll_8']  = dataframe['low'].rolling(8).min()
-        dataframe['ll_10'] = dataframe['low'].rolling(10).min()
-        dataframe['ll_20'] = dataframe['low'].rolling(20).min()
-        dataframe['hh_20'] = dataframe['high'].rolling(20).max()
+        # Momentum/extremos — ventanas ×m
+        dataframe['roc5'] = ta.ROC(dataframe, timeperiod=5 * m)         # ROC20 = 5h equiv
+        dataframe['ll_8']  = dataframe['low'].rolling(8 * m).min()      # 32 períodos = 8h
+        dataframe['ll_10'] = dataframe['low'].rolling(10 * m).min()     # 40 períodos = 10h
+        dataframe['ll_20'] = dataframe['low'].rolling(20 * m).min()     # 80 períodos = 20h
+        dataframe['hh_20'] = dataframe['high'].rolling(20 * m).max()    # 80 períodos = 20h
 
-        # ATR y variaciones
-        dataframe['atr']  = ta.ATR(dataframe, timeperiod=14)
-        dataframe['pct_1']= dataframe['close'].pct_change(1) * 100.0
-        dataframe['pct_3']= dataframe['close'].pct_change(3) * 100.0
+        # ATR y variaciones — período ×m
+        dataframe['atr']  = ta.ATR(dataframe, timeperiod=14 * m)        # 56 períodos = 14h equiv
+        dataframe['pct_1']= dataframe['close'].pct_change(1) * 100.0   # 1 candle (15min)
+        dataframe['pct_3']= dataframe['close'].pct_change(3) * 100.0   # 3 candles (45min)
 
-        # Estructura / cooldown
+        # Estructura / cooldown — COOLDOWN_BARS ya está en unidades de candles
         body = (dataframe['close'] - dataframe['open']).abs()
         dataframe['big_red']  = (dataframe['close'] < dataframe['open']) & (body > 1.2 * dataframe['atr'])
         dataframe['cooldown'] = dataframe['big_red'].rolling(self.COOLDOWN_BARS).max()
@@ -279,26 +288,27 @@ class MyStrategy(IStrategy):
         # Volumen relativo
         dataframe['vol_spike'] = dataframe['volume'] > (dataframe['volume_mean_slow'] * 1.15)
 
-        # Máximo/mínimo local reciente (ventanas cortas) para “picos/vales óptimos”
+        # Máximo/mínimo local reciente — ventanas ×m para equivalencia temporal
         dataframe['loc_peak'] = (
-            (dataframe['high'] >= dataframe['high'].rolling(6).max()) &
+            (dataframe['high'] >= dataframe['high'].rolling(6 * m).max()) &
             (dataframe['high'] >= dataframe['high'].shift(1)) &
             (dataframe['high'] >= dataframe['high'].shift(2))
         )
         dataframe['loc_trough'] = (
-            (dataframe['low'] <= dataframe['low'].rolling(6).min()) &
+            (dataframe['low'] <= dataframe['low'].rolling(6 * m).min()) &
             (dataframe['low'] <= dataframe['low'].shift(1)) &
             (dataframe['low'] <= dataframe['low'].shift(2))
         )
 
         # Anti-chase helpers
         dataframe['green'] = dataframe['close'] > dataframe['open']
+        # green_streak: NO se escala × m. La ventana son los últimos 3 candles (misma lógica que a 1h)
         dataframe['green_streak'] = (
             dataframe['green']
             .rolling(window=MAX_GREEN_STREAK, min_periods=1)
             .sum()
         )
-        dataframe['vol_mean_fast'] = dataframe['volume'].rolling(window=10).mean()
+        dataframe['vol_mean_fast'] = dataframe['volume'].rolling(window=10 * m).mean()  # 40 períodos = 10h
         dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
         dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
 
@@ -361,7 +371,10 @@ class MyStrategy(IStrategy):
         )
 
         # B) Re-entrada tras cerrar fuera de banda inferior y volver dentro
+        # Refuerzo vs 1h: requerir 2+ candles consecutivos bajo BB80 antes del cruce
+        # (a 1h, 1 candle bajo BB = 1h entero; a 15m, 1 candle = 15min, no es suficiente)
         B = (
+            (dataframe['close'].shift(2) < dataframe['bb_lowerband'].shift(2)) &  # 2+ candles bajo BB80
             (dataframe['close'].shift(1) < dataframe['bb_lowerband'].shift(1)) &
             (dataframe['close'] > dataframe['bb_lowerband']) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
@@ -373,10 +386,10 @@ class MyStrategy(IStrategy):
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < self.C_STOCH_MAX) &        # < 35
+            (dataframe['stoch_k'] < self.C_STOCH_MAX) &        # < 40
             (dataframe['stoch_d'] < self.C_STOCH_MAX) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
-            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(4)) &  # EMA20 plana (4h en 1h TF)
+            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(16)) & # EMA20 plana (16×15m = 4h equivalente)
             (bb_zone_ok)
         )
 
@@ -409,14 +422,14 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)
         )
 
-        # Filtro de tendencia triple:
-        # EMA50 no bajando más de 1.5% en 48h (tendencia media)
-        # EMA20 no bajando más de 1% en 24h (tendencia corta)
-        # Precio no más de 6% por debajo de EMA50 (no en downtrend profundo)
+        # Filtro de tendencia triple (usa EMAs de alta temporalidad para consistencia con 1h):
+        # ema50_ht (EMA200@15m = 50h) no bajando >1.5% en 48h (192×15m) — equivale a EMA50@1h shift(48)
+        # ema20_ht (EMA80@15m = 20h) no bajando >1% en 24h (96×15m)    — equivale a EMA20@1h shift(24)
+        # Precio no más de 2.2% por debajo de EMA200@15m
         ema50_ok = (
-            (dataframe['ema_slow'] >= dataframe['ema_slow'].shift(48) * 0.985) &
-            (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(24) * 0.990) &
-            (dataframe['close'] >= dataframe['ema_slow'] * 0.978)
+            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * 0.985) &
+            (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96) * 0.990) &
+            (dataframe['close'] >= dataframe['ema50_ht'] * 0.978)
         )
 
         # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
