@@ -3,7 +3,7 @@ import numpy as np
 # --------------------------------
 import talib.abstract as ta
 from freqtrade.strategy.interface import IStrategy
-from freqtrade.strategy import stoploss_from_open
+from freqtrade.strategy import stoploss_from_open, IntParameter, DecimalParameter
 from pandas import DataFrame
 from datetime import datetime
 from typing import Optional
@@ -209,6 +209,21 @@ class MyStrategy(IStrategy):
     BB20_WINDOW = BB20_WINDOW
     BB20_STDS = BB20_STDS
 
+    # ---------------------- HYPEROPT PARAMETERS ----------------------
+    # Espacio de búsqueda para optimización automática de parámetros
+    # Umbrales de señal de entrada
+    buy_c_stoch_max      = IntParameter(12, 40, default=25,    space='buy', optimize=True)
+    buy_bb_zone_ok       = DecimalParameter(0.38, 0.72, default=0.55, decimals=2, space='buy', optimize=True)
+    buy_a_rsi_prev_max   = IntParameter(38, 62, default=52,    space='buy', optimize=True)
+    buy_f_rsi_max        = IntParameter(20, 35, default=30,    space='buy', optimize=True)
+    # Filtro de tendencia triple (ema50_ok)
+    buy_ema50_close_pct  = DecimalParameter(0.958, 0.992, default=0.978, decimals=3, space='buy', optimize=True)
+    buy_ema50_slope_48h  = DecimalParameter(0.976, 0.998, default=0.985, decimals=3, space='buy', optimize=True)
+    buy_ema20_slope_24h  = DecimalParameter(0.980, 0.998, default=0.990, decimals=3, space='buy', optimize=True)
+    # Salidas
+    sell_peak_min_profit = DecimalParameter(0.010, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
+    sell_hh_ema_min      = DecimalParameter(0.012, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
+
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         m = TF_MULT  # multiplicador de períodos para equivalencia temporal vs 1h
@@ -334,8 +349,8 @@ class MyStrategy(IStrategy):
             (dataframe['rsi'] > self.NO_BUY_RSI_MIN)        # RSI > 68
         )
 
-        # Zonas de valor (relajadas)
-        bb_zone_ok = (dataframe['bb_percent'] <= self.BB_ZONE_OK)  # 65% inferior de BB
+        # Zonas de valor — usa parámetro hyperopt si está disponible
+        bb_zone_ok = (dataframe['bb_percent'] <= self.buy_bb_zone_ok.value)
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
@@ -362,7 +377,7 @@ class MyStrategy(IStrategy):
             (dataframe['loc_trough']) &
             (dataframe['low'] <= dataframe['ll_10'] * self.A_LL10_MULT) &
             bb_deep_zone &
-            (dataframe['rsi_prev'] < self.A_RSI_PREV_MAX) &    # < 52
+            (dataframe['rsi_prev'] < self.buy_a_rsi_prev_max.value) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['close'] >= dataframe['open']) &
             dataframe['vol_spike'] &
@@ -386,8 +401,8 @@ class MyStrategy(IStrategy):
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
-            (dataframe['stoch_k'] < self.C_STOCH_MAX) &        # < 40
-            (dataframe['stoch_d'] < self.C_STOCH_MAX) &
+            (dataframe['stoch_k'] < self.buy_c_stoch_max.value) &
+            (dataframe['stoch_d'] < self.buy_c_stoch_max.value) &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(16)) & # EMA20 plana (16×15m = 4h equivalente)
             (bb_zone_ok)
@@ -415,7 +430,7 @@ class MyStrategy(IStrategy):
 
         # F) RSI extremo (<25) + rebote + MACD girando (señal de capitulación selectiva)
         F = (
-            (dataframe['rsi'] < self.F_RSI_MAX) &              # RSI < 25 (extremo)
+            (dataframe['rsi'] < self.buy_f_rsi_max.value) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &        # RSI subiendo
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             dataframe['vol_spike'] &                            # volumen confirmado
@@ -427,9 +442,9 @@ class MyStrategy(IStrategy):
         # ema20_ht (EMA80@15m = 20h) no bajando >1% en 24h (96×15m)    — equivale a EMA20@1h shift(24)
         # Precio no más de 2.2% por debajo de EMA200@15m
         ema50_ok = (
-            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * 0.985) &
-            (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96) * 0.990) &
-            (dataframe['close'] >= dataframe['ema50_ht'] * 0.978)
+            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * self.buy_ema50_slope_48h.value) &
+            (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value) &
+            (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value)
         )
 
         # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
@@ -579,13 +594,13 @@ class MyStrategy(IStrategy):
             ema_break  = (last['close'] < last['ema8'])
 
             # Pico óptimo: banda sup + máximo local + giro claro
-            if current_profit >= self.PEAK_MIN_PROFIT and near_upper and loc_peak and rsi_high and (
+            if current_profit >= self.sell_peak_min_profit.value and near_upper and loc_peak and rsi_high and (
                 bear_candle or macd_fade or ema_break
             ):
                 return "peak_exit_top_optimal"
 
             # HH + ruptura EMA8 + MACD debilitando (clásico)
-            if current_profit >= self.HH_EMA_MIN_PROFIT and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= self.SELL_RSI_HH_EMA):
+            if current_profit >= self.sell_hh_ema_min.value and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= self.SELL_RSI_HH_EMA):
                 return "hh_ema8_break_exit"
 
             # Rechazo de mecha grande en zona alta
