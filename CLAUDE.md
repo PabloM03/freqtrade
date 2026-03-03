@@ -77,21 +77,31 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **E** `E_ema8_pullback`: cross above EMA32 + EMA32 rising + RSI strong
 - **F** `F_rsi_extreme`: RSI < 25 + RSI up + MACD not worsening + vol_spike + bb_zone_ok
 
-**Triple trend filter (ema50_ok):**
-- EMA200(15m) not falling >1.5% in 48h (shift(192))
-- EMA80(15m) not falling >1% in 24h (shift(96))
-- close >= EMA200(15m) × 0.978
+**Triple trend filter (ema50_ok) — uses hyperopt-tuned params:**
+- EMA200(15m) not falling >1.8% in 48h (shift(192) × 0.982)
+- EMA80(15m) not falling >1.4% in 24h (shift(96) × 0.986)
+- close >= EMA200(15m) × **0.992** (stricter than default 0.978 — tighter filter)
 
-**Custom exits:** crash guard, hard_tp (25%), peak exits, HH+EMA32 break, momentum fade
+**Custom exits:** crash guard, hard_tp (25%), peak exits ≥2.4%, HH+EMA32 break ≥4.4%
 
-**Backtest results (15m, unlimited stake ~200 USDC/trade, 11 pairs, no AVAX/XRP/LTC):**
-- 2024: 14 trades, 42.9% WR, **+51.75 USDC (+5.17%)** — C_stochrsi: 62.5% WR, +62.89 USDC
-- 2025: 20 trades, 45.0% WR, **+133.80 USDC (+13.38%)** — B: 50% WR, C: TURBO hard_tp +30%
-- Combined 2 years: **+185.55 USDC (+18.55%)** — 34 trades, 44.1% WR
+**Hyperopt parameters** (saved in `CombinedBinHAndCluc.json`, loaded automatically):
+- `buy_c_stoch_max=32`, `buy_bb_zone_ok=0.68`, `buy_a_rsi_prev_max=42`, `buy_f_rsi_max=35`
+- `buy_ema50_close_pct=0.992`, `buy_ema50_slope_48h=0.982`, `buy_ema20_slope_24h=0.986`
+- `sell_peak_min_profit=0.024`, `sell_hh_ema_min=0.044`, `stoploss=-0.06`
+
+**Backtest results (15m hybrid hyperopt, ~200 USDC/trade, 11 pairs, no AVAX/XRP/LTC):**
+- 2024: **15 trades, 60% WR, +80.22 USDC (+8.02%)**, max drawdown 3.63%
+- 2025: **22 trades, 54.5% WR, +96.25 USDC (+9.62%)**, max drawdown 3.62% (vs market -54.36%)
+- Combined 2 years: **+176.47 USDC (+17.6%)** — 37 trades, 56.8% WR avg
+
+**Iteration history (15m):**
+- Baseline pre-hyperopt: 34 trades, 44.1% WR, +185.55 USDC (2 years)
+- Hyperopt pure (-30% SL): 86.7% WR in 2024 — OVERFITTED (DOGE -30% in 2025)
+- Hybrid (-6% SL + hyperopt entry/exit): **37 trades, 57% WR, +176.47 USDC** ← CURRENT
 
 **1h baseline (for comparison):**
 - 2024: 9 trades, 55.6% WR, +39.87 USDC — 2025: 6 trades, 66.7% WR, +273.55 USDC (BONK outlier)
-- 1h without BONK outlier: +128 USDC vs 15m: +185 USDC — **15m wins risk-adjusted**
+- 15m hybrid gives better WR (57% vs 44% baseline 15m) with consistent drawdown ≤3.6%
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
