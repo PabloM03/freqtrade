@@ -1,0 +1,36 @@
+{
+  "strategy_name": "MyStrategy",
+  "params": {
+    "roi": {
+      "0": 10.0
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "buy_a_rsi_prev_max": 42,
+      "buy_bb_zone_ok": 0.68,
+      "buy_c_stoch_max": 32,
+      "buy_ema20_slope_24h": 0.986,
+      "buy_ema50_close_pct": 0.992,
+      "buy_ema50_slope_48h": 0.982,
+      "buy_f_rsi_max": 35
+    },
+    "sell": {
+      "sell_hh_ema_min": 0.044,
+      "sell_peak_min_profit": 0.024
+    },
+    "protection": {},
+    "stoploss": {
+      "stoploss": -0.06
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-03-03 13:55:31.671257+00:00"
+}
