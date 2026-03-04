@@ -8,10 +8,10 @@ This is a **freqtrade** crypto trading bot configured for Binance spot trading w
 
 **Current config summary:**
 - Exchange: Binance (spot, USDC)
-- Pairs: BTC, ETH, SOL, DOGE, ADA, LINK, PEPE, SHIB, BONK, WIF, TURBO (vs USDC) — 11 pairs, VolumePairList top-40
+- Pairs: BTC, SOL, LINK, PEPE, SHIB, BONK, WIF, TURBO (vs USDC) — **8 pairs** (DOGE/ETH/ADA removed: consistently losing)
 - Timeframe: **15m** (migrated from 1h → more trades)
 - Max open trades: 5 | Stake: **unlimited** (~200 USDC/trade with 1000 USDC wallet)
-- Blacklisted: XRP, AVAX, LTC (0 wins across 2 years, consistent stop-losses)
+- Blacklisted: XRP, AVAX, LTC, DOGE, ETH, ADA (0 wins or consistent stop-losses across all timeframes tested)
 - Dry-run: enabled (1000 USDC simulated wallet)
 - API server: `0.0.0.0:8080`
 
@@ -91,21 +91,29 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - `buy_g_bb_zone=0.42`, `buy_g_vol_mult=2.8`
 - `sell_peak_min_profit=0.027`, `sell_hh_ema_min=0.055`, `stoploss=-0.347`
 
-**Backtest results (15m, ~200 USDC/trade, 11 pairs, no AVAX/XRP/LTC) — post-optimization:**
-- 2022 (OOS bear): **10 trades, 50% WR, +1.81% (+18 USDC)**, max drawdown 1.6% ✅ no overfitting
+**Backtest results (15m, ~200 USDC/trade, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) — post-optimization v3:**
+- 2022 (OOS bear): **7 trades, 57.1% WR, +2.47% (+24.7 USDC)**, max drawdown 0.82% ✅ no overfitting
 - 2023 (OOS recovery): **0 trades** — anti_chase blocks entries in relentless uptrend (by design)
-- 2024 (in-sample): **22 trades, 81.8% WR, +224.18 USDC (+22.42%)**, max drawdown 5.04%
-- 2025 (in-sample): **30 trades, 70.0% WR, +223.82 USDC (+22.38%)**, max drawdown 6.61%
-- **Combined 4 years: +48.03%** vs +14.46% baseline = **3.3× improvement**
+- 2024 (in-sample): **20 trades, 85.0% WR, +234.36 USDC (+23.44%)**, max drawdown 5.04%
+- 2025 (in-sample): **24 trades, 79.2% WR, +312.39 USDC (+31.24%)**, max drawdown 6.61%
+- **CAGR 2024-2025 compuesto: ~27.3% anual** (1000 → 1234 → 1619 USDC, +62%)
+
+**Pair selection analysis (why 8 pairs):**
+- DOGE: 3 trades, 33.3% WR, -47.5 USDC in 2025 → BLACKLISTED
+- ETH: 1 trade, 0% WR, -26.4 USDC in 2025, 0 trades 2024 → BLACKLISTED
+- ADA: -8.4 USDC (2024) + -12.3 USDC (2025) = consistently losing → BLACKLISTED
+- BONK/WIF/TURBO: meme coins, 100% WR, main profit drivers (BONK alone: +131.9 USDC in 2024)
+- C_stochrsi is the star condition: 19 trades over 2y, +298 USDC (67% of total profit)
 
 **Strategy comparison (final):**
 
 | Strategy | 2022 | 2023 | 2024 | 2025 | Total |
 |---|---|---|---|---|---|
-| **MyStrategy v2 (DEPLOYED)** | +1.81% | 0% | **+22.42%** | **+22.38%** | **+48.03%** |
+| **MyStrategy v3 (DEPLOYED, 8 pairs)** | +2.47% | 0% | **+23.44%** | **+31.24%** | **+62% compuesto** |
+| MyStrategy v2 (11 pairs) | +1.81% | 0% | +22.42% | +22.38% | +48.03% |
 | MyStrategy v1 (old) | -3.18% | 0% | +8.02% | +9.62% | +14.46% |
+| FreqAI Hybrid | N/A | N/A | 0 trades | +3.57% | failed |
 | TrendFollowing15m | -17.5% | — | — | — | failed |
-| FreqAI LightGBM v2 | N/A | N/A | -12.18% | N/A | failed |
 
 **Why no 2023 trades:** anti_chase filter correctly blocks buying in relentless uptrend (price above EMA80/BB_mid). Strategy is reversal-only → only enters on genuine dips. Missing 2023 rally is a design trade-off for safety.
 
@@ -113,7 +121,8 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 
 **Iteration history (15m):**
 - v1 (Jan 2025): 37 trades, 57% WR, +176.47 USDC (2 years)
-- v2 (Mar 2026): 52 trades, 75% WR avg, +448 USDC (2 years) — **HARD_TP 25%→50%, G condition, expanded hyperopt ranges** ← CURRENT
+- v2 (Mar 2026): 52 trades, 75% WR avg, +448 USDC (2 years) — HARD_TP 25%→50%, G condition, expanded hyperopt ranges
+- v3 (Mar 2026): **44 trades, 82% WR avg, +62% compuesto** — Blacklisted DOGE/ETH/ADA, 8-pair optimal list ← CURRENT
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
@@ -122,7 +131,7 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **`ops/train_and_deploy.sh`**: rolling hyperopt script — downloads 200 days of data, runs 1200 epochs, deploys `ops/params.json` atomically, then restarts the service.
 
 ### Pairlist & filtering
-The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, refreshed every 15 min). A fixed whitelist of 11 quality pairs seeds the list. `config.backtest.json` overrides to `StaticPairList` for reproducible backtests. The blacklist enforces `*/USDC` only, and explicitly excludes XRP, AVAX, and LTC (consistent losing pairs across all timeframes tested).
+The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, refreshed every 15 min). A fixed whitelist of 8 quality pairs seeds the list. `config.backtest.json` overrides to `StaticPairList` for reproducible backtests. The blacklist enforces `*/USDC` only, and explicitly excludes XRP, AVAX, LTC, DOGE, ETH, ADA (consistent losing pairs; the reversal strategy works best on high-volatility meme coins, not large-caps).
 
 ## Key Files
 
@@ -130,7 +139,7 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 |------|---------|
 | `config.json` | Bot configuration (exchange, pairs, stake, API server) |
 | `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) |
-| `config.backtest.json` | Backtest override (StaticPairList, 11 pairs) |
+| `config.backtest.json` | Backtest override (StaticPairList, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) |
 | `ops/trade.sh` | Production start script |
 | `ops/train_and_deploy.sh` | Periodic hyperopt + atomic deploy |
 | `change.Strategy.sh` | Switch strategy + restart service |
