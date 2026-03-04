@@ -1,5 +1,7 @@
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import numpy as np
+import os
+import pandas as pd
 # --------------------------------
 import talib.abstract as ta
 from freqtrade.strategy.interface import IStrategy
@@ -223,6 +225,9 @@ class MyStrategy(IStrategy):
     # G) Hammer en zona baja
     buy_g_bb_zone        = DecimalParameter(0.18, 0.42, default=0.30, decimals=2, space='buy', optimize=True)
     buy_g_vol_mult       = DecimalParameter(1.4, 2.8, default=1.8, decimals=1, space='buy', optimize=True)
+    # Sentimiento — Fear & Greed Index (contrarian: añadir entradas en pánico extremo)
+    # H) Panic Entry: F&G < buy_fg_fear → mercado en pánico máximo = mejor momento reversal
+    buy_fg_fear          = IntParameter(15, 40, default=30, space='buy', optimize=True)
     # Salidas
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
@@ -330,6 +335,27 @@ class MyStrategy(IStrategy):
         dataframe['pump_vol'] = dataframe['volume'] > (dataframe['vol_mean_fast'] * PUMP_VOL_MULT)
         dataframe['near_hh'] = dataframe['close'] >= (dataframe['hh_20'] * (1.0 - NEAR_HH_DISTANCE))
 
+        # --- Fear & Greed Index (sentimiento macro diario, contrarian) ---
+        # Datos descargados en user_data/data/sentiment/fear_greed.csv
+        # Fuente: alternative.me/fng — actualizado cada 24h
+        # Valor 0-100: 0=Extreme Fear (máximo contrarian buy), 100=Extreme Greed (no comprar)
+        if not hasattr(self, '_fg_lookup'):
+            fg_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                '..', 'data', 'sentiment', 'fear_greed.csv'
+            )
+            if os.path.exists(fg_path):
+                fg_df = pd.read_csv(fg_path)
+                fg_series = pd.to_datetime(fg_df['date']).dt.date
+                self._fg_lookup = dict(zip(fg_series, fg_df['fear_greed'].astype(int)))
+                self._fg_last = int(fg_df['fear_greed'].iloc[0])  # último valor conocido
+            else:
+                self._fg_lookup = {}
+                self._fg_last = 50  # neutro si no hay datos
+
+        # Asignar valor diario a cada vela 15m (forward-fill con último valor si falta)
+        candle_dates = dataframe['date'].dt.tz_convert(None).dt.date
+        dataframe['fear_greed'] = candle_dates.map(self._fg_lookup).fillna(self._fg_last).astype(int)
 
         return dataframe
 
@@ -462,6 +488,20 @@ class MyStrategy(IStrategy):
             (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value)
         )
 
+        # H) Panic Entry — Fear & Greed en Extreme Fear (contrarian máximo)
+        # Lógica inversa: cuando el mercado está en pánico (F&G bajo), relajar requisitos de entrada
+        # No bloqueamos entradas en greed (ema50_ok ya gestiona el macro trend)
+        # Requiere mínimo local real (loc_trough) para evitar cuchillo cayendo en bear sostenido
+        H = (
+            (dataframe['fear_greed'] < self.buy_fg_fear.value) &  # mercado en pánico extremo
+            dataframe['loc_trough'] &                              # mínimo local real (no caída libre)
+            (dataframe['rsi'] < 42) &                              # moderadamente sobrevendido
+            (dataframe['rsi'] > dataframe['rsi_prev']) &           # RSI girando al alza
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            dataframe['vol_spike'] &                               # volumen confirmando
+            (bb_zone_ok)                                           # zona baja BB
+        )
+
         # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
         anti_cuchillo_D = (
             (~dataframe['cooldown'].astype(bool)) &
@@ -469,7 +509,7 @@ class MyStrategy(IStrategy):
         )
         base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok
 
-        # base_filter con tendencia para A, B, C, E, F
+        # base_filter con tendencia para A, B, C, E, F, G
         base_filter_trend = base_filter & ema50_ok
 
         # Calcular máscaras una sola vez para evitar el bug de re-evaluación
@@ -480,6 +520,8 @@ class MyStrategy(IStrategy):
         mask_E = E & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D
         mask_F = F & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
+        # H: Panic Entry — solo en Extreme Fear (F&G < buy_fg_fear), no se solapa con A-G
+        mask_H = H & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
 
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
@@ -501,6 +543,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_G, 'enter_long'] = 1
         dataframe.loc[mask_G, 'enter_tag'] = 'G_hammer'
+
+        dataframe.loc[mask_H, 'enter_long'] = 1
+        dataframe.loc[mask_H, 'enter_tag'] = 'H_panic_fear'
 
         return dataframe
 
