@@ -1,0 +1,15 @@
+{
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "exchange": {
+    "pair_whitelist": [
+      "BTC/USDC",
+      "ETH/USDC",
+      "SOL/USDC",
+      "ADA/USDC"
+    ]
+  }
+}
