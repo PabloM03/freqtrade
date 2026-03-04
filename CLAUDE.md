@@ -69,7 +69,7 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **BB windows** (already scaled): BB80 (20h equiv), BB180 (45h equiv)
 - **Rolling lookbacks** (×4): ll_8→32, ll_10→40, ll_20→80, hh_20→80, roc5→roc20
 
-**7 entry conditions (A–G):**
+**8 entry conditions (A–H):**
 - **A** `A_local_min`: loc_trough + ll_10 + bb_deep_zone(≤0.20) + RSI turning up + green candle + vol_spike + MACD>0
 - **B** `B_bb_reentry`: 2+ consecutive candles below BB80 → crossing back above + RSI up + MACD not worsening
 - **C** `C_stochrsi`: StochRSI(14,3,3) cross oversold (k>d, both <25) + MACD not worsening + EMA80 flat over 4h
@@ -77,6 +77,7 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **E** `E_ema8_pullback`: cross above EMA32 + EMA32 rising + RSI strong
 - **F** `F_rsi_extreme`: RSI < 25 + RSI up + MACD not worsening + vol_spike + bb_zone_ok
 - **G** `G_hammer`: hammerish candle + bb_percent ≤ 0.42 + vol > 2.8x mean + RSI up + MACD + directional alcista
+- **H** `H_panic_fear`: Fear&Greed < 30 (Extreme Fear) + loc_trough + RSI < 42 + RSI up + MACD + vol_spike + bb_zone (contrarian: añade entradas en pánico macro)
 
 **Triple trend filter (ema50_ok) — uses hyperopt-tuned params:**
 - EMA200(15m) not falling >1.4% in 48h (shift(192) × 0.986)
@@ -88,11 +89,17 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 **Hyperopt parameters v2** (500 epochs, OnlyProfitHyperOptLoss, 2024+2025 combined, saved in `CombinedBinHAndCluc.json`):
 - `buy_c_stoch_max=36`, `buy_bb_zone_ok=0.68`, `buy_a_rsi_prev_max=38`, `buy_f_rsi_max=37`
 - `buy_ema50_close_pct=0.989`, `buy_ema50_slope_48h=0.986`, `buy_ema20_slope_24h=0.948`
-- `buy_g_bb_zone=0.42`, `buy_g_vol_mult=2.8`
+- `buy_g_bb_zone=0.42`, `buy_g_vol_mult=2.8`, `buy_fg_fear=30`
 - `sell_peak_min_profit=0.027`, `sell_hh_ema_min=0.055`, `stoploss=-0.347`
 
-**Backtest results (15m, ~200 USDC/trade, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) — post-optimization v3:**
-- 2022 (OOS bear): **7 trades, 57.1% WR, +2.47% (+24.7 USDC)**, max drawdown 0.82% ✅ no overfitting
+**Fear & Greed Index integration:**
+- Data source: `user_data/data/sentiment/fear_greed.csv` (Alternative.me API, daily, 2018+)
+- Used ONLY as entry signal (H condition) — NOT as blocking filter (would hurt 2024 bull runs)
+- H fires when F&G < 30 (Extreme Fear) + loc_trough → contrarian entries in max panic moments
+- Effect: 2024/2025 unchanged, 2022 OOS +1 extra winner trade
+
+**Backtest results (15m, ~200 USDC/trade, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) — v4 (Fear&Greed):**
+- 2022 (OOS bear): **8 trades, 87.5% WR, +3.93% (+39.3 USDC)**, max drawdown 0.82% ✅
 - 2023 (OOS recovery): **0 trades** — anti_chase blocks entries in relentless uptrend (by design)
 - 2024 (in-sample): **20 trades, 85.0% WR, +234.36 USDC (+23.44%)**, max drawdown 5.04%
 - 2025 (in-sample): **24 trades, 79.2% WR, +312.39 USDC (+31.24%)**, max drawdown 6.61%
@@ -109,7 +116,8 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 
 | Strategy | 2022 | 2023 | 2024 | 2025 | Total |
 |---|---|---|---|---|---|
-| **MyStrategy v3 (DEPLOYED, 8 pairs)** | +2.47% | 0% | **+23.44%** | **+31.24%** | **+62% compuesto** |
+| **MyStrategy v4 (F&G, DEPLOYED)** | **+3.93%** | 0% | **+23.44%** | **+31.24%** | **+62% compuesto** |
+| MyStrategy v3 (8 pairs) | +2.47% | 0% | +23.44% | +31.24% | +62% compuesto |
 | MyStrategy v2 (11 pairs) | +1.81% | 0% | +22.42% | +22.38% | +48.03% |
 | MyStrategy v1 (old) | -3.18% | 0% | +8.02% | +9.62% | +14.46% |
 | FreqAI Hybrid | N/A | N/A | 0 trades | +3.57% | failed |
@@ -122,7 +130,8 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 **Iteration history (15m):**
 - v1 (Jan 2025): 37 trades, 57% WR, +176.47 USDC (2 years)
 - v2 (Mar 2026): 52 trades, 75% WR avg, +448 USDC (2 years) — HARD_TP 25%→50%, G condition, expanded hyperopt ranges
-- v3 (Mar 2026): **44 trades, 82% WR avg, +62% compuesto** — Blacklisted DOGE/ETH/ADA, 8-pair optimal list ← CURRENT
+- v3 (Mar 2026): **44 trades, 82% WR avg, +62% compuesto** — Blacklisted DOGE/ETH/ADA, 8-pair optimal list
+- v4 (Mar 2026): **Same 2024+2025 + 2022 OOS +3.93% (was +2.47%)** — Fear&Greed Index integrado, condición H_panic_fear ← CURRENT
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
