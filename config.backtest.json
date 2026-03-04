@@ -7,10 +7,7 @@
   "exchange": {
     "pair_whitelist": [
       "BTC/USDC",
-      "ETH/USDC",
       "SOL/USDC",
-      "DOGE/USDC",
-      "ADA/USDC",
       "LINK/USDC",
       "PEPE/USDC",
       "SHIB/USDC",

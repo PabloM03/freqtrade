@@ -9,7 +9,14 @@
       "BTC/USDC",
       "ETH/USDC",
       "SOL/USDC",
-      "ADA/USDC"
+      "ADA/USDC",
+      "DOGE/USDC",
+      "LINK/USDC",
+      "SHIB/USDC",
+      "LTC/USDC",
+      "PEPE/USDC",
+      "BONK/USDC",
+      "WIF/USDC"
     ]
   }
 }
