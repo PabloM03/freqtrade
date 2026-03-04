@@ -22,7 +22,7 @@ SLIPPAGE_BUFFER = 0.0007
 MIN_PROFIT_NET = 7 * FEE_RATE + SLIPPAGE_BUFFER      # exige beneficio real antes de permitir salidas
 PEAK_MIN_PROFIT = 0.020                               # vender en picos bien formados (15m swing)
 HH_EMA_MIN_PROFIT = 0.025                             # salida HH + ruptura EMA8 (15m swing)
-HARD_TP = 0.25                                        # TP 25% — safety net para movimientos extremos en 15m
+HARD_TP = 0.50                                        # TP 50% — deja correr a BONK/WIF/memes en bull runs
 
 # --- Stoploss y trailing (menos margen: candles de 15m tienen menos ruido) ---
 STOPLOSS_ABS = -0.035                                 # SL 3.5% — 15m tiene menos ruido que 1h
@@ -213,16 +213,19 @@ class MyStrategy(IStrategy):
     # Espacio de búsqueda para optimización automática de parámetros
     # Umbrales de señal de entrada
     buy_c_stoch_max      = IntParameter(12, 40, default=25,    space='buy', optimize=True)
-    buy_bb_zone_ok       = DecimalParameter(0.38, 0.72, default=0.55, decimals=2, space='buy', optimize=True)
-    buy_a_rsi_prev_max   = IntParameter(38, 62, default=52,    space='buy', optimize=True)
-    buy_f_rsi_max        = IntParameter(20, 35, default=30,    space='buy', optimize=True)
-    # Filtro de tendencia triple (ema50_ok)
-    buy_ema50_close_pct  = DecimalParameter(0.958, 0.992, default=0.978, decimals=3, space='buy', optimize=True)
-    buy_ema50_slope_48h  = DecimalParameter(0.976, 0.998, default=0.985, decimals=3, space='buy', optimize=True)
-    buy_ema20_slope_24h  = DecimalParameter(0.980, 0.998, default=0.990, decimals=3, space='buy', optimize=True)
+    buy_bb_zone_ok       = DecimalParameter(0.38, 0.85, default=0.55, decimals=2, space='buy', optimize=True)
+    buy_a_rsi_prev_max   = IntParameter(38, 65, default=52,    space='buy', optimize=True)
+    buy_f_rsi_max        = IntParameter(20, 38, default=30,    space='buy', optimize=True)
+    # Filtro de tendencia triple (ema50_ok) — rangos ampliados para cubrir recuperación
+    buy_ema50_close_pct  = DecimalParameter(0.860, 0.998, default=0.978, decimals=3, space='buy', optimize=True)
+    buy_ema50_slope_48h  = DecimalParameter(0.940, 0.998, default=0.985, decimals=3, space='buy', optimize=True)
+    buy_ema20_slope_24h  = DecimalParameter(0.945, 0.998, default=0.990, decimals=3, space='buy', optimize=True)
+    # G) Hammer en zona baja
+    buy_g_bb_zone        = DecimalParameter(0.18, 0.42, default=0.30, decimals=2, space='buy', optimize=True)
+    buy_g_vol_mult       = DecimalParameter(1.4, 2.8, default=1.8, decimals=1, space='buy', optimize=True)
     # Salidas
-    sell_peak_min_profit = DecimalParameter(0.010, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
-    sell_hh_ema_min      = DecimalParameter(0.012, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
+    sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
+    sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
 
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -437,6 +440,18 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)
         )
 
+        # G) Hammer en zona baja con fuerte confirmación (selectivo — solo hammers de calidad)
+        G = (
+            hammerish &                                          # mecha inferior > 1.22× cuerpo
+            (dataframe['bb_percent'] <= self.buy_g_bb_zone.value) &  # zona baja BB
+            (dataframe['volume'] > dataframe['vol_mean_fast'] * self.buy_g_vol_mult.value) &
+            (dataframe['rsi'] > dataframe['rsi_prev']) &        # RSI girando
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            (dataframe['close'] >= dataframe['open']) &          # vela verde
+            (dataframe['adx'] < 30) &                           # no en tendencia fuerte bajista
+            (dataframe['minus_di'] <= dataframe['plus_di'])      # direccional alcista
+        )
+
         # Filtro de tendencia triple (usa EMAs de alta temporalidad para consistencia con 1h):
         # ema50_ht (EMA200@15m = 50h) no bajando >1.5% en 48h (192×15m) — equivale a EMA50@1h shift(48)
         # ema20_ht (EMA80@15m = 20h) no bajando >1% en 24h (96×15m)    — equivale a EMA20@1h shift(24)
@@ -464,6 +479,7 @@ class MyStrategy(IStrategy):
         mask_D = D & base_filter_D & ~mask_A & ~mask_B & ~mask_C
         mask_E = E & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D
         mask_F = F & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
+        mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
 
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
@@ -482,6 +498,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_F, 'enter_long'] = 1
         dataframe.loc[mask_F, 'enter_tag'] = 'F_rsi_extreme'
+
+        dataframe.loc[mask_G, 'enter_long'] = 1
+        dataframe.loc[mask_G, 'enter_tag'] = 'G_hammer'
 
         return dataframe
 

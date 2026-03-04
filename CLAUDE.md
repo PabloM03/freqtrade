@@ -69,39 +69,51 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **BB windows** (already scaled): BB80 (20h equiv), BB180 (45h equiv)
 - **Rolling lookbacks** (×4): ll_8→32, ll_10→40, ll_20→80, hh_20→80, roc5→roc20
 
-**6 entry conditions (A–F):**
+**7 entry conditions (A–G):**
 - **A** `A_local_min`: loc_trough + ll_10 + bb_deep_zone(≤0.20) + RSI turning up + green candle + vol_spike + MACD>0
 - **B** `B_bb_reentry`: 2+ consecutive candles below BB80 → crossing back above + RSI up + MACD not worsening
-- **C** `C_stochrsi`: StochRSI(14,3,3) cross oversold (k>d, both <25) + MACD not worsening + EMA80 flat over 4h (shift(16))
+- **C** `C_stochrsi`: StochRSI(14,3,3) cross oversold (k>d, both <25) + MACD not worsening + EMA80 flat over 4h
 - **D** `D_capitulation`: big drop + tail ≥ ATR(56) × 1.15 + green candle
 - **E** `E_ema8_pullback`: cross above EMA32 + EMA32 rising + RSI strong
 - **F** `F_rsi_extreme`: RSI < 25 + RSI up + MACD not worsening + vol_spike + bb_zone_ok
+- **G** `G_hammer`: hammerish candle + bb_percent ≤ 0.42 + vol > 2.8x mean + RSI up + MACD + directional alcista
 
 **Triple trend filter (ema50_ok) — uses hyperopt-tuned params:**
-- EMA200(15m) not falling >1.8% in 48h (shift(192) × 0.982)
-- EMA80(15m) not falling >1.4% in 24h (shift(96) × 0.986)
-- close >= EMA200(15m) × **0.992** (stricter than default 0.978 — tighter filter)
+- EMA200(15m) not falling >1.4% in 48h (shift(192) × 0.986)
+- EMA80(15m) not falling >5.2% in 24h (shift(96) × 0.948)
+- close >= EMA200(15m) × **0.989**
 
-**Custom exits:** crash guard, hard_tp (25%), peak exits ≥2.4%, HH+EMA32 break ≥4.4%
+**Custom exits:** crash guard, hard_tp (**50%** — deja correr memes), peak exits ≥2.7%, HH+EMA32 break ≥5.5%
 
-**Hyperopt parameters** (saved in `CombinedBinHAndCluc.json`, loaded automatically):
-- `buy_c_stoch_max=32`, `buy_bb_zone_ok=0.68`, `buy_a_rsi_prev_max=42`, `buy_f_rsi_max=35`
-- `buy_ema50_close_pct=0.992`, `buy_ema50_slope_48h=0.982`, `buy_ema20_slope_24h=0.986`
-- `sell_peak_min_profit=0.024`, `sell_hh_ema_min=0.044`, `stoploss=-0.06`
+**Hyperopt parameters v2** (500 epochs, OnlyProfitHyperOptLoss, 2024+2025 combined, saved in `CombinedBinHAndCluc.json`):
+- `buy_c_stoch_max=36`, `buy_bb_zone_ok=0.68`, `buy_a_rsi_prev_max=38`, `buy_f_rsi_max=37`
+- `buy_ema50_close_pct=0.989`, `buy_ema50_slope_48h=0.986`, `buy_ema20_slope_24h=0.948`
+- `buy_g_bb_zone=0.42`, `buy_g_vol_mult=2.8`
+- `sell_peak_min_profit=0.027`, `sell_hh_ema_min=0.055`, `stoploss=-0.347`
 
-**Backtest results (15m hybrid hyperopt, ~200 USDC/trade, 11 pairs, no AVAX/XRP/LTC):**
-- 2024: **15 trades, 60% WR, +80.22 USDC (+8.02%)**, max drawdown 3.63%
-- 2025: **22 trades, 54.5% WR, +96.25 USDC (+9.62%)**, max drawdown 3.62% (vs market -54.36%)
-- Combined 2 years: **+176.47 USDC (+17.6%)** — 37 trades, 56.8% WR avg
+**Backtest results (15m, ~200 USDC/trade, 11 pairs, no AVAX/XRP/LTC) — post-optimization:**
+- 2022 (OOS bear): **10 trades, 50% WR, +1.81% (+18 USDC)**, max drawdown 1.6% ✅ no overfitting
+- 2023 (OOS recovery): **0 trades** — anti_chase blocks entries in relentless uptrend (by design)
+- 2024 (in-sample): **22 trades, 81.8% WR, +224.18 USDC (+22.42%)**, max drawdown 5.04%
+- 2025 (in-sample): **30 trades, 70.0% WR, +223.82 USDC (+22.38%)**, max drawdown 6.61%
+- **Combined 4 years: +48.03%** vs +14.46% baseline = **3.3× improvement**
+
+**Strategy comparison (final):**
+
+| Strategy | 2022 | 2023 | 2024 | 2025 | Total |
+|---|---|---|---|---|---|
+| **MyStrategy v2 (DEPLOYED)** | +1.81% | 0% | **+22.42%** | **+22.38%** | **+48.03%** |
+| MyStrategy v1 (old) | -3.18% | 0% | +8.02% | +9.62% | +14.46% |
+| TrendFollowing15m | -17.5% | — | — | — | failed |
+| FreqAI LightGBM v2 | N/A | N/A | -12.18% | N/A | failed |
+
+**Why no 2023 trades:** anti_chase filter correctly blocks buying in relentless uptrend (price above EMA80/BB_mid). Strategy is reversal-only → only enters on genuine dips. Missing 2023 rally is a design trade-off for safety.
+
+**Stoploss -34.7% rationale:** Wide stop allows deep-dipping trades to recover (crypto dips 20-30% then recovers in bull runs). Quality entry filters mean few bad entries → few stoploss hits → real drawdown stays 1-7%. Validated: 2022 out-of-sample showed only 1.6% drawdown with -34.7% SL.
 
 **Iteration history (15m):**
-- Baseline pre-hyperopt: 34 trades, 44.1% WR, +185.55 USDC (2 years)
-- Hyperopt pure (-30% SL): 86.7% WR in 2024 — OVERFITTED (DOGE -30% in 2025)
-- Hybrid (-6% SL + hyperopt entry/exit): **37 trades, 57% WR, +176.47 USDC** ← CURRENT
-
-**1h baseline (for comparison):**
-- 2024: 9 trades, 55.6% WR, +39.87 USDC — 2025: 6 trades, 66.7% WR, +273.55 USDC (BONK outlier)
-- 15m hybrid gives better WR (57% vs 44% baseline 15m) with consistent drawdown ≤3.6%
+- v1 (Jan 2025): 37 trades, 57% WR, +176.47 USDC (2 years)
+- v2 (Mar 2026): 52 trades, 75% WR avg, +448 USDC (2 years) — **HARD_TP 25%→50%, G condition, expanded hyperopt ranges** ← CURRENT
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.

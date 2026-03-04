@@ -1,5 +1,8 @@
 # Freqtrade rules
 config*.json
+!config.freqai.json
+!config.backtest.json
+!config.backtest.freqai.json
 conectServer.sh
 *.sqlite
 *.sqlite-shm
