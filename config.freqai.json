@@ -6,7 +6,7 @@
     "train_period_days": 90,
     "backtest_period_days": 30,
     "live_retrain_hours": 168,
-    "identifier": "lgbm-v4",
+    "identifier": "lgbm-v5",
     "feature_parameters": {
       "include_timeframes": ["15m"],
       "include_corr_pairlist": [],
