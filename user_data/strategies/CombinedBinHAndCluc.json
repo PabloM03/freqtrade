@@ -23,7 +23,8 @@
       "buy_f_rsi_max": 37,
       "buy_g_bb_zone": 0.42,
       "buy_g_vol_mult": 2.8,
-      "buy_fg_fear": 30
+      "buy_fg_fear": 30,
+      "buy_i_rsi_crash": 18
     },
     "sell": {
       "sell_hh_ema_min": 0.055,
