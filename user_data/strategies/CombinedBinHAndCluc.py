@@ -228,6 +228,8 @@ class MyStrategy(IStrategy):
     # Sentimiento — Fear & Greed Index (contrarian: añadir entradas en pánico extremo)
     # H) Panic Entry: F&G < buy_fg_fear → mercado en pánico máximo = mejor momento reversal
     buy_fg_fear          = IntParameter(15, 40, default=30, space='buy', optimize=True)
+    # I) RSI crash ultra-extremo: bypass anti_chase cuando RSI < buy_i_rsi_crash
+    buy_i_rsi_crash      = IntParameter(14, 22, default=18, space='buy', optimize=True)
     # Salidas
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
@@ -502,6 +504,20 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)                                           # zona baja BB
         )
 
+        # I) RSI Ultra-Extremo — bypass de anti_chase cuando crash es de capitulación real
+        # Cuando RSI < 20 el activo ha caído tanto que la regla "close < EMA20" es redundante
+        # Protección extra: loc_trough + MACD + vol para evitar cuchillo
+        # No requiere anti_chase (el RSI < 20 implica caída severa ya ocurrida)
+        I_rsi_crash = (
+            (dataframe['rsi'] < self.buy_i_rsi_crash.value) &     # RSI ultra-extremo
+            dataframe['loc_trough'] &                              # mínimo local (rebote probable)
+            (dataframe['rsi'] > dataframe['rsi_prev']) &           # RSI girando al alza
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            dataframe['vol_spike'] &                               # volumen confirmando
+            (dataframe['bb_percent'] <= 0.35) &                    # zona baja BB (precio deprimido)
+            (~dataframe['cooldown'].astype(bool))                  # no en cooldown
+        )
+
         # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
         anti_cuchillo_D = (
             (~dataframe['cooldown'].astype(bool)) &
@@ -522,6 +538,10 @@ class MyStrategy(IStrategy):
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
         # H: Panic Entry — solo en Extreme Fear (F&G < buy_fg_fear), no se solapa con A-G
         mask_H = H & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
+        # I: RSI crash ultra-extremo — usa base_filter_D (sin anti_chase, como capitulación D)
+        # Pero SÍ requiere ema50_ok (estructura macro sana)
+        base_filter_I = anti_cuchillo_D & ema50_ok
+        mask_I = I_rsi_crash & base_filter_I & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H
 
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
@@ -546,6 +566,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_H, 'enter_long'] = 1
         dataframe.loc[mask_H, 'enter_tag'] = 'H_panic_fear'
+
+        dataframe.loc[mask_I, 'enter_long'] = 1
+        dataframe.loc[mask_I, 'enter_tag'] = 'I_rsi_crash'
 
         return dataframe
 
