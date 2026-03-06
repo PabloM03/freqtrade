@@ -28,6 +28,21 @@ import xml.etree.ElementTree as ET
 ROOT     = Path(__file__).parent.parent
 DATA_DIR = ROOT / "user_data" / "data" / "sentiment"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+ENV_FILE = Path(__file__).parent / ".env"
+
+
+def load_env() -> dict:
+    tokens = {}
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                tokens[k.strip()] = v.strip()
+    return tokens
+
+
+ENV = load_env()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
@@ -396,12 +411,31 @@ def fetch_rss_sentiment(hours_back: int = 24):
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+def run_ai_analysis():
+    """Llama a analyze_news.py si está disponible y hay API key."""
+    import subprocess, sys
+    script = Path(__file__).parent / "analyze_news.py"
+    if not script.exists():
+        print("[AI] analyze_news.py no encontrado, saltando.")
+        return
+    if not ENV.get("ANTHROPIC_API_KEY", "").strip():
+        print("[AI] Sin ANTHROPIC_API_KEY en ops/.env — usando fallback keywords.")
+    try:
+        subprocess.run(
+            [sys.executable, str(script), "--max", "40"],
+            capture_output=False, timeout=120
+        )
+    except Exception as e:
+        print(f"[AI] Error ejecutando analyze_news.py: {e}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick",    action="store_true", help="Solo F&G")
     parser.add_argument("--trending", action="store_true", help="Solo CoinGecko trending + Binance spikes")
     parser.add_argument("--whales",   action="store_true", help="Solo whale volume detector")
     parser.add_argument("--news",     action="store_true", help="Solo noticias RSS")
+    parser.add_argument("--ai",       action="store_true", help="Solo análisis AI de noticias (Claude)")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
@@ -417,11 +451,15 @@ if __name__ == "__main__":
         update_whale_volume()
     elif args.news:
         fetch_rss_sentiment()
+    elif args.ai:
+        run_ai_analysis()
     else:
+        # Pipeline completo: todas las fuentes
         update_fear_greed()
         update_whale_volume()
         update_coingecko_trending()
         update_binance_volume_spikes()
         fetch_rss_sentiment()
+        run_ai_analysis()   # análisis AI al final (más lento si hay API key)
 
     print("\nDone.\n")

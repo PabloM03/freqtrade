@@ -47,6 +47,7 @@ class MyStrategyML(MyStrategy):
         dataframe[f"%-adx-period_{period}"] = dataframe["adx"]
         dataframe[f"%-vol-spike-period_{period}"] = dataframe["vol_spike"].astype(float)
         dataframe[f"%-fear-greed-period_{period}"] = dataframe["fear_greed"]
+        dataframe[f"%-ai-score-period_{period}"]   = dataframe["ai_score"]
         return dataframe
 
     def feature_engineering_standard(self, dataframe: DataFrame,

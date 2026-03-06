@@ -94,24 +94,39 @@ class AltcoinPumpStrategy(IStrategy):
     def __init__(self, config: dict) -> None:
         super().__init__(config)
         self._trending_coins: set = set()
-        self._load_trending()
+        self._ai_scores: dict     = {}   # {coin: float} desde news_themes.json
+        self._load_external_signals()
 
-    def _load_trending(self):
+    def _load_external_signals(self):
+        """Carga señales externas: CoinGecko trending + análisis AI de noticias."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        f = DATA_DIR / "trending_coins.json"
-        if not f.exists():
-            return
-        try:
-            history = json.loads(f.read_text())
-            entry = next((e for e in reversed(history) if e.get("date") == today), None)
-            if entry:
-                for coin in entry.get("coins", []):
-                    self._trending_coins.add(coin.get("symbol", "").upper())
-                    mapped = COINGECKO_IDS.get(coin.get("coin_id", ""))
-                    if mapped:
-                        self._trending_coins.add(mapped)
-        except Exception:
-            pass
+
+        # ── CoinGecko trending ──────────────────────────────────────────────────
+        tf = DATA_DIR / "trending_coins.json"
+        if tf.exists():
+            try:
+                history = json.loads(tf.read_text())
+                entry = next((e for e in reversed(history) if e.get("date") == today), None)
+                if entry:
+                    for coin in entry.get("coins", []):
+                        self._trending_coins.add(coin.get("symbol", "").upper())
+                        mapped = COINGECKO_IDS.get(coin.get("coin_id", ""))
+                        if mapped:
+                            self._trending_coins.add(mapped)
+            except Exception:
+                pass
+
+        # ── AI news themes (ops/analyze_news.py) ───────────────────────────────
+        nf = DATA_DIR / "news_themes.json"
+        if nf.exists():
+            try:
+                history = json.loads(nf.read_text())
+                entry = next((e for e in reversed(history) if e.get("date") == today), None)
+                if entry:
+                    for sig in entry.get("coin_signals", []):
+                        self._ai_scores[sig["coin"]] = float(sig.get("ai_score", 0))
+            except Exception:
+                pass
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         coin = metadata["pair"].split("/")[0]
@@ -163,8 +178,14 @@ class AltcoinPumpStrategy(IStrategy):
         # ── Anti-crash ─────────────────────────────────────────────────────────
         dataframe["drop_8"] = dataframe["close"] / dataframe["close"].shift(8) - 1
 
-        # ── Señal externa ──────────────────────────────────────────────────────
+        # ── Señales externas ───────────────────────────────────────────────────
         dataframe["trending_today"] = int(coin in self._trending_coins)
+        # ai_score: -1 (bearish noticias) a +1 (bullish noticias) — de analyze_news.py
+        dataframe["ai_score"]       = self._ai_scores.get(coin, 0.0)
+        # ai_bullish: señal AI fuerte positiva hoy (reduce umbral de volumen)
+        dataframe["ai_news_bullish"] = dataframe["ai_score"] >= 0.3
+        # ai_bearish: señal AI negativa → bloquear entradas (ej: hack o ban del coin)
+        dataframe["ai_news_bearish"] = dataframe["ai_score"] <= -0.4
 
         return dataframe
 
@@ -189,34 +210,51 @@ class AltcoinPumpStrategy(IStrategy):
         ema_ok          = dataframe["ema20"] > dataframe["ema50"]
         not_crash       = dataframe["drop_8"] > -0.05
         not_overextend  = dataframe["close"] < dataframe["ema200"] * 1.60
+        not_ai_bearish  = ~dataframe["ai_news_bearish"]  # bloquear si hay noticias muy negativas del coin
 
-        # Señal principal: pump breakout con vela verde + acumulación previa confirmada
+        # Señal principal: pump breakout + acumulación previa + sin noticias negativas
         pump_signal = (
             vol_surge &
-            dataframe["vol_building"] &   # volumen subiendo horas antes (no solo spike puntual)
+            dataframe["vol_building"] &
             bullish_strong &
             breakout &
             rsi_ok &
             rsi_rising &
             ema_ok &
             not_crash &
-            not_overextend
+            not_overextend &
+            not_ai_bearish
         )
 
-        # Trending boost: si CoinGecko trending → umbral de volumen reducido
+        # Trending boost: CoinGecko trending → umbral de volumen reducido
         trending_signal = (
             (dataframe["trending_today"] == 1) &
             (dataframe["vol_ratio"] >= self.buy_trending_vol.value) &
             bullish_strong &
             breakout &
             rsi_ok &
-            not_crash
+            not_crash &
+            not_ai_bearish
         )
 
-        dataframe.loc[pump_signal,                     "enter_long"] = 1
-        dataframe.loc[pump_signal,                     "enter_tag"]  = "pump_breakout"
-        dataframe.loc[trending_signal & ~pump_signal,  "enter_long"] = 1
-        dataframe.loc[trending_signal & ~pump_signal,  "enter_tag"]  = "trending_boost"
+        # AI news boost: noticia temática bullish confirmada + breakout técnico
+        # (ej: "IA avanza" → LINK/SOL + breakout = alta probabilidad)
+        ai_signal = (
+            dataframe["ai_news_bullish"] &
+            (dataframe["vol_ratio"] >= self.buy_trending_vol.value) &
+            bullish_strong &
+            breakout &
+            rsi_ok &
+            not_crash &
+            not_overextend
+        )
+
+        dataframe.loc[pump_signal,                                              "enter_long"] = 1
+        dataframe.loc[pump_signal,                                              "enter_tag"]  = "pump_breakout"
+        dataframe.loc[trending_signal & ~pump_signal,                           "enter_long"] = 1
+        dataframe.loc[trending_signal & ~pump_signal,                           "enter_tag"]  = "trending_boost"
+        dataframe.loc[ai_signal & ~pump_signal & ~trending_signal,              "enter_long"] = 1
+        dataframe.loc[ai_signal & ~pump_signal & ~trending_signal,              "enter_tag"]  = "ai_news_boost"
 
         return dataframe
 
