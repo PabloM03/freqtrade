@@ -1,4 +1,5 @@
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+import json
 import numpy as np
 import os
 import pandas as pd
@@ -359,6 +360,32 @@ class MyStrategy(IStrategy):
         candle_dates = dataframe['date'].dt.tz_convert(None).dt.date
         dataframe['fear_greed'] = candle_dates.map(self._fg_lookup).fillna(self._fg_last).astype(int)
 
+        # --- AI News Score (análisis temático de noticias con Claude) ---
+        # Fuente: ops/analyze_news.py → user_data/data/sentiment/news_themes.json
+        # ai_score: -1 (noticias muy negativas del coin) a +1 (noticias muy positivas)
+        # Ejemplos: "avance de IA" → LINK/SOL sube | "hack de protocolo" → bearish
+        # Solo disponible en live trading — en backtest = 0 (no afecta resultados históricos)
+        if not hasattr(self, '_ai_scores'):
+            self._ai_scores = {}
+            news_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                '..', 'data', 'sentiment', 'news_themes.json'
+            )
+            if os.path.exists(news_path):
+                try:
+                    from datetime import date as date_type
+                    today_str = str(date_type.today())
+                    history = json.loads(open(news_path).read())
+                    entry = next((e for e in reversed(history) if e.get('date') == today_str), None)
+                    if entry:
+                        for sig in entry.get('coin_signals', []):
+                            self._ai_scores[sig['coin']] = float(sig.get('ai_score', 0))
+                except Exception:
+                    pass
+
+        coin = metadata['pair'].split('/')[0]
+        dataframe['ai_score'] = self._ai_scores.get(coin, 0.0)
+
         return dataframe
 
     # ---------------------- ENTRADAS (alta frecuencia, filtros relajados) ----------------------
@@ -543,6 +570,21 @@ class MyStrategy(IStrategy):
         base_filter_I = anti_cuchillo_D & ema50_ok
         mask_I = I_rsi_crash & base_filter_I & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H
 
+        # J) AI News Entry — solo disponible en live trading cuando ops/analyze_news.py corre
+        # Concepto: noticia temática bullish fuerte (ai_score > 0.3) + coin técnicamente sobrevendida
+        # Ejemplos: "avance de IA" → LINK/SOL | "meme season viral" → BONK/WIF/PEPE
+        # En backtest: ai_score = 0 siempre → mask_J = False → no afecta resultados históricos
+        J_ai_news = (
+            (dataframe['ai_score'] >= 0.30) &        # señal AI positiva fuerte para este coin hoy
+            dataframe['loc_trough'] &                 # mínimo local (no comprar en caída libre)
+            (dataframe['rsi'] < 50) &                 # coin sobrevendida o neutral-baja
+            (dataframe['rsi'] > dataframe['rsi_prev']) &  # RSI girando al alza
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+            dataframe['vol_spike'] &                  # volumen confirmando el giro
+            (bb_zone_ok)                              # zona baja BB
+        )
+        mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -569,6 +611,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_I, 'enter_long'] = 1
         dataframe.loc[mask_I, 'enter_tag'] = 'I_rsi_crash'
+
+        dataframe.loc[mask_J, 'enter_long'] = 1
+        dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
 
         return dataframe
 

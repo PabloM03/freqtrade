@@ -3,28 +3,28 @@
     "enabled": true,
     "model": "LightGBMClassifier",
     "purge_old_models": 2,
-    "train_period_days": 60,
-    "backtest_period_days": 30,
-    "live_retrain_hours": 72,
-    "identifier": "lgbm-clf-v1",
+    "train_period_days": 30,
+    "backtest_period_days": 15,
+    "live_retrain_hours": 48,
+    "identifier": "lgbm-clf-v2",
     "feature_parameters": {
       "include_timeframes": ["15m"],
       "include_corr_pairlist": ["BTC/USDC"],
-      "label_period_candles": 96,
+      "label_period_candles": 48,
       "include_shifted_candles": 2,
       "DI_threshold": 0,
       "use_SVM_to_remove_outliers": false,
-      "indicator_periods_candles": [8, 20, 40, 80]
+      "indicator_periods_candles": [8, 20, 40]
     },
     "data_split_parameters": {
-      "test_size": 0.25,
+      "test_size": 0.20,
       "shuffle": false
     },
     "model_training_parameters": {
-      "n_estimators": 300,
+      "n_estimators": 200,
       "learning_rate": 0.05,
-      "num_leaves": 32,
-      "min_child_samples": 20,
+      "num_leaves": 24,
+      "min_child_samples": 15,
       "feature_fraction": 0.8,
       "bagging_fraction": 0.8,
       "bagging_freq": 5,
