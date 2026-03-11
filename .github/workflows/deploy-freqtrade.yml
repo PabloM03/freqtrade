@@ -35,7 +35,7 @@ jobs:
           ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Sincronizar código al servidor con rsync (sin borrar config.json)
+      - name: Sincronizar código al servidor con rsync (preservando estado del bot)
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -46,12 +46,22 @@ jobs:
                           --exclude .github/ \
                           --exclude .gitignore \
                           --exclude config.json \
+                          --exclude config.secrets.json \
+                          --exclude ops/config.withparams.json \
+                          --exclude ops/params.json \
+                          --exclude '*.sqlite' \
+                          --exclude '*.sqlite-shm' \
+                          --exclude '*.sqlite-wal' \
                           --exclude logs/ \
+                          --exclude user_data/data/ \
+                          --exclude user_data/models/ \
+                          --exclude user_data/hyperopt_results/ \
+                          --exclude 'user_data/backtest_results/*.json' \
+                          --exclude 'user_data/backtest_results/*.zip' \
                           --exclude __pycache__/ \
                           --exclude */__pycache__/ \
                           --exclude CLAUDE.md \
-                          --exclude .claude/ \
-                          --exclude .claude/**"
+                          --exclude .claude/"
           rsync -az --delete $RSYNC_EXCLUDES \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
