@@ -1,5 +1,7 @@
 # Freqtrade rules
 config*.json
+!config.base.json
+!config.secrets.json.example
 !config.freqai.json
 !config.backtest.json
 !config.backtest.freqai.json
@@ -126,3 +128,6 @@ target/
 !config_examples/config_kraken.example.json
 !config_examples/config_freqai.example.json
 
+
+# Sentiment API tokens (never commit)
+ops/.env
