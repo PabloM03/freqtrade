@@ -35,7 +35,7 @@ REQUIERE:
   ANTHROPIC_API_KEY en ops/.env
 """
 
-import json, csv, time, argparse, urllib.request, xml.etree.ElementTree as ET
+import json, csv, argparse, urllib.request, xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -179,6 +179,47 @@ Reglas:
 4. Si la noticia es irrelevante o incierta → theme: "unrelated", confidence < 0.3
 5. Sé conservador: mejor pocos coins afectados que muchos con baja confianza"""
 
+BATCH_PROMPT = """\
+Eres un analista de trading crypto experto. Analiza TODOS estos titulares de noticias de hoy \
+y genera una señal de sentimiento consolidada por coin para las próximas 24h.
+
+Nuestras monedas: BTC, SOL, LINK, PEPE, SHIB, BONK, WIF, TURBO
+
+REGLAS DE MAPEO:
+- Trump/gobierno EEUU sobre Bitcoin → BTC (muy alto impacto)
+- Reserva estratégica Bitcoin, ETF noticias → BTC (alto positivo)
+- Crisis geopolítica, guerra, colapso financiero → BTC safe haven (positivo)
+- Regulación SEC/CFTC/bans → BTC y SOL (negativo)
+- IA aplicada a blockchain, oráculos, datos on-chain → LINK, SOL (positivo)
+- Chainlink partnerships, CCIP → LINK (alto positivo)
+- Solana DeFi/gaming/NFT/ecosystem → SOL y BONK, WIF (positivo)
+- Meme coins viral, dog coins, meme season → BONK, WIF, PEPE, SHIB, TURBO
+- Binance/Coinbase listing → coin específica (muy alto positivo)
+- Hack, exploit → coin específica o BTC (negativo)
+- Rally general, ATH BTC → todos (positivo moderado)
+- Crash, liquidaciones masivas → todos (negativo)
+
+ESCALA ai_score (-1.0 a +1.0):
+ +0.7/+1.0 = noticia muy bullish (listing top exchange, reserva nacional)
+ +0.3/+0.6 = noticia positiva moderada
+ +0.1/+0.2 = ligeramente positivo
+  0.0      = neutral / sin señal
+ -0.1/-0.2 = ligeramente negativo
+ -0.3/-0.6 = noticia negativa moderada
+ -0.7/-1.0 = noticia muy bearish (hack masivo, ban)
+
+Responde SOLO con JSON válido (sin markdown, sin texto extra):
+{{
+  "coin_signals": [
+    {{"coin": "BTC", "ai_score": 0.8, "reason": "Trump confirmó reserva estratégica BTC"}},
+    {{"coin": "LINK", "ai_score": 0.5, "reason": "Chainlink integración con top 3 DeFi"}}
+  ],
+  "summary": "Resumen en 1 frase del sentimiento del mercado hoy",
+  "top_themes": ["macro_btc", "ai_crypto"]
+}}
+
+Solo incluye coins con |ai_score| >= 0.15. Si no hay noticias relevantes, devuelve coin_signals vacío."""
+
 
 def fetch_recent_news(hours_back: int = 24) -> list[dict]:
     """Descarga y parsea artículos RSS de las últimas N horas."""
@@ -228,8 +269,106 @@ def fetch_recent_news(hours_back: int = 24) -> list[dict]:
     return articles
 
 
+def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
+    """
+    Analiza TODOS los artículos en UNA SOLA llamada a la API.
+    Coste: ~$0.001/ejecución vs ~$0.05/ejecución del método por-artículo.
+    Retorna (coin_signals, usage_info).
+    """
+    try:
+        import anthropic
+    except ImportError:
+        print("[AI] 'anthropic' no instalado. Usando fallback keywords.")
+        return _fallback_batch_analysis(articles), {}
+
+    if not ANTHROPIC_KEY:
+        print("[AI] Sin ANTHROPIC_API_KEY. Usando fallback keywords.")
+        return _fallback_batch_analysis(articles), {}
+
+    # Construir texto con todos los titulares
+    news_lines = []
+    for i, a in enumerate(articles):
+        desc = a.get("description", "")[:200].replace("\n", " ").strip()
+        line = f"{i+1}. {a['title']}"
+        if desc:
+            line += f" | {desc}"
+        news_lines.append(line)
+    news_text = "\n".join(news_lines)
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5",   # alias oficial — más barato y rápido
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": BATCH_PROMPT + f"\n\nNOTICIAS ({len(articles)} artículos):\n{news_text}"
+            }]
+        )
+        text = msg.content[0].text.strip()
+        usage = {
+            "input_tokens":  msg.usage.input_tokens,
+            "output_tokens": msg.usage.output_tokens,
+            # haiku: $1/1M input + $5/1M output
+            "estimated_cost_usd": round(
+                msg.usage.input_tokens  * 1e-6 * 1.0 +
+                msg.usage.output_tokens * 1e-6 * 5.0,
+                5
+            ),
+        }
+    except Exception as e:
+        print(f"[AI] Error Claude API: {e}")
+        return _fallback_batch_analysis(articles), {}
+
+    # Extraer JSON (puede venir con markdown)
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[AI] Error parseando JSON: {e}\nRaw: {text[:300]}")
+        return _fallback_batch_analysis(articles), usage
+
+    signals_raw = result.get("coin_signals", [])
+    clean = []
+    for sig in signals_raw:
+        coin  = str(sig.get("coin", "")).upper().strip()
+        score = float(sig.get("ai_score", 0))
+        reason = str(sig.get("reason", ""))
+        if coin in OUR_COINS and abs(score) >= 0.15:
+            clean.append({"coin": coin, "ai_score": round(score, 3), "reason": reason})
+
+    return clean, usage
+
+
+def _fallback_batch_analysis(articles: list[dict]) -> list[dict]:
+    """Fallback sin API key — análisis por keywords sobre todos los artículos."""
+    from collections import defaultdict
+    coin_hits = defaultdict(list)
+
+    for a in articles:
+        analysis = _fallback_keyword_analysis(a["title"], a.get("description", ""))
+        sentiment = analysis.get("sentiment", "neutral")
+        score = analysis.get("intensity", 0.3) if sentiment == "bullish" else (
+            -analysis.get("intensity", 0.3) if sentiment == "bearish" else 0
+        )
+        for coin in analysis.get("affected_coins", []):
+            if coin in OUR_COINS:
+                coin_hits[coin].append(score)
+
+    signals = []
+    for coin, scores in coin_hits.items():
+        avg = sum(scores) / len(scores)
+        if abs(avg) >= 0.15:
+            signals.append({"coin": coin, "ai_score": round(avg, 3), "reason": "fallback keywords"})
+    return signals
+
+
 def analyze_article_with_claude(title: str, description: str) -> dict:
-    """Usa Claude AI para analizar el tema y impacto de una noticia."""
+    """Analiza UN artículo (método legacy — preferir analyze_batch_with_claude)."""
     try:
         import anthropic
     except ImportError:
@@ -241,9 +380,8 @@ def analyze_article_with_claude(title: str, description: str) -> dict:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",  # rápido y barato (~0.001 USD/call)
+            model="claude-haiku-4-5",
             max_tokens=300,
-            temperature=0.1,
             messages=[{
                 "role": "user",
                 "content": ANALYSIS_PROMPT.format(
@@ -253,12 +391,10 @@ def analyze_article_with_claude(title: str, description: str) -> dict:
             }]
         )
         text = msg.content[0].text.strip()
-        # Extraer JSON del response
         if "{" in text and "}" in text:
             start = text.index("{")
             end   = text.rindex("}") + 1
             result = json.loads(text[start:end])
-            # Filtrar coins no reconocidas
             result["affected_coins"] = [c for c in result.get("affected_coins", []) if c in OUR_COINS]
             return result
     except Exception as e:
@@ -350,59 +486,48 @@ def aggregate_coin_signals(analyses: list[dict], date: str) -> list[dict]:
     return rows
 
 
-def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int = 50):
-    """Pipeline principal: fetch → analyze → aggregate → save."""
+def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int = 30):
+    """
+    Pipeline principal: fetch → analyze (1 sola llamada API) → save.
+    Coste estimado: ~$0.001/ejecución con claude-haiku-4-5 (vs ~$0.05 con método por-artículo).
+    """
+    api_status = "✅ key encontrada" if ANTHROPIC_KEY else "⚠ sin key (fallback keywords)"
     print(f"\n{'='*60}")
     print(f"  AI News Analysis — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"  Modelo: claude-haiku-4-5 | API: {'✅ key encontrada' if ANTHROPIC_KEY else '⚠ sin key (fallback keywords)'}")
+    print(f"  Modelo: claude-haiku-4-5 | API: {api_status}")
     print(f"{'='*60}\n")
 
     # 1. Fetch news
     articles = fetch_recent_news(hours_back)
+    batch = articles[:max_articles]
 
-    # 2. Analyze each article
-    analyses = []
-    print(f"[AI] Analizando {min(len(articles), max_articles)} artículos...\n")
+    if not batch:
+        print("[AI] Sin artículos recientes.")
+        coin_signals, usage = [], {}
+    else:
+        # 2. Analizar TODO en UNA sola llamada (50x más barato que por-artículo)
+        print(f"[AI] Analizando {len(batch)} artículos en 1 llamada batch...")
+        coin_signals, usage = analyze_batch_with_claude(batch)
 
-    for i, art in enumerate(articles[:max_articles]):
-        result = analyze_article_with_claude(art["title"], art["description"])
-        result["title"]     = art["title"]
-        result["published"] = art["published"]
-        result["source"]    = art["source"]
-        analyses.append(result)
+        if usage:
+            print(f"[AI] Tokens usados: {usage['input_tokens']} input + {usage['output_tokens']} output")
+            print(f"[AI] Coste estimado: ${usage['estimated_cost_usd']:.5f} USD")
 
-        # Show interesting results
-        if result.get("confidence", 0) >= 0.6 and result.get("theme") != "unrelated":
-            coins_str = ", ".join(result.get("affected_coins", [])) or "ninguna"
-            sent_emoji = "🟢" if result["sentiment"] == "bullish" else ("🔴" if result["sentiment"] == "bearish" else "⚪")
-            print(f"  {sent_emoji} [{result['theme']:25s}] conf={result['confidence']:.1f} → {coins_str}")
-            print(f"     '{art['title'][:80]}'")
-            print(f"     {result.get('reasoning', '')}\n")
-
-        # Rate limiting para Claude API (gratis: ~5 req/min)
-        if ANTHROPIC_KEY and (i + 1) % 5 == 0:
-            time.sleep(1.2)
-
-    # 3. Aggregate signals
+    # 3. Show summary
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    coin_signals = aggregate_coin_signals(analyses, today)
-
-    # 4. Show summary
     print(f"\n{'─'*50}")
-    print(f"  Señales AI para {today}:")
+    print(f"  Señales AI para {today} ({len(coin_signals)} coins con señal):")
     print(f"{'─'*50}")
-    for row in coin_signals:
-        if row["ai_articles"] > 0:
-            bar = "█" * min(int(abs(row["ai_score"]) * 10), 10)
-            sign = "+" if row["ai_score"] > 0 else ""
-            direction = "BULLISH" if row["ai_score"] > 0.2 else ("BEARISH" if row["ai_score"] < -0.2 else "neutral")
-            print(f"  {row['coin']:6s}: {sign}{row['ai_score']:+.2f}  {bar:<10}  ({row['ai_articles']} noticias) → {direction}")
+    for sig in sorted(coin_signals, key=lambda x: abs(x["ai_score"]), reverse=True):
+        bar = "█" * min(int(abs(sig["ai_score"]) * 10), 10)
+        direction = "BULLISH" if sig["ai_score"] > 0 else "BEARISH"
+        print(f"  {sig['coin']:6s}: {sig['ai_score']:+.2f}  {bar:<10}  → {direction}  ({sig['reason'][:70]})")
 
     if dry_run:
         print("\n[dry-run] No se guardaron archivos.")
         return
 
-    # 5. Save JSON (señal del día, para live trading)
+    # 4. Save JSON (señal del día, para live trading)
     json_out = DATA_DIR / "news_themes.json"
     history = []
     if json_out.exists():
@@ -412,24 +537,36 @@ def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int 
             history = []
     history = [e for e in history if e.get("date") != today]
     history.append({
-        "date": today,
-        "coin_signals": coin_signals,
-        "articles_analyzed": len(analyses),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "date":             today,
+        "coin_signals":     coin_signals,
+        "articles_analyzed": len(batch),
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "cost_usd":         usage.get("estimated_cost_usd", 0),
     })
     history = history[-90:]  # mantener 90 días
     json_out.write_text(json.dumps(history, indent=2, ensure_ascii=False))
 
-    # 6. Save CSV (histórico para backtest futuro)
+    # 5. Save CSV (histórico — formato compatible con aggregate_coin_signals legacy)
     csv_out = DATA_DIR / "news_themes.csv"
     existing = []
     if csv_out.exists():
         with open(csv_out) as f:
-            existing = [r for r in csv.DictReader(f) if r["date"] != today]
+            existing = [r for r in csv.DictReader(f) if r.get("date") != today]
+    csv_rows = [
+        {"date": today, "coin": s["coin"], "ai_score": s["ai_score"],
+         "ai_net": s["ai_score"], "ai_articles": 1}
+        for s in coin_signals
+    ]
+    # Añadir coins sin señal con score 0
+    coins_with_signal = {s["coin"] for s in coin_signals}
+    for coin in OUR_COINS:
+        if coin not in coins_with_signal:
+            csv_rows.append({"date": today, "coin": coin, "ai_score": 0.0, "ai_net": 0.0, "ai_articles": 0})
+
     with open(csv_out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["date", "coin", "ai_score", "ai_net", "ai_articles"])
         w.writeheader()
-        w.writerows(existing + coin_signals)
+        w.writerows(existing + csv_rows)
 
     print(f"\n[AI] Guardado → {json_out.name} + {csv_out.name}")
     print("Done.\n")
