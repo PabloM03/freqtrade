@@ -152,7 +152,7 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
 - **Systemd service**: `freqtrade.service` runs the bot as a daemon; restart via `sudo systemctl restart freqtrade`.
 - **`ops/trade.sh`**: production start script (uses `ops/config.withparams.json`, not root `config.json`).
-- **`ops/train_and_deploy.sh`**: rolling hyperopt script — downloads 200 days of data, runs 1200 epochs, deploys `ops/params.json` atomically, then restarts the service.
+- **`ops/train_and_deploy.sh`**: rolling hyperopt script — downloads data desde 20220101 (incluye 2022 bear OOS), corre 1200 epochs con `CalmarHyperOptLoss` (profit/drawdown), valida en OOS 2022 (aborta si WR < 40%), despliega params atómicamente y reinicia el servicio.
 
 ### Pairlist & filtering
 The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, refreshed every 15 min). A fixed whitelist of 8 quality pairs seeds the list. `config.backtest.json` overrides to `StaticPairList` for reproducible backtests. The blacklist enforces `*/USDC` only, and explicitly excludes XRP, AVAX, LTC, DOGE, ETH, ADA (consistent losing pairs; the reversal strategy works best on high-volatility meme coins, not large-caps).
@@ -164,13 +164,57 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 | `config.base.json` | Bot configuration (exchange, pairs, stake — no credentials) — committed |
 | `config.secrets.json` | API keys, Telegram token, API server credentials — gitignored |
 | `config.secrets.json.example` | Template for config.secrets.json — committed |
-| `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) |
+| `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) — reversal 15m, 8 condiciones A-J |
+| `user_data/strategies/FreqAIEnhanced15m.py` | Estrategia FreqAI (condición K) — clasificador LightGBM, standalone para comparativa |
 | `config.backtest.json` | Backtest override (StaticPairList, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) |
+| `config.freqai.json` | FreqAI overlay: LightGBMClassifier, train_period=90d, label=48 candles (12h), v3 |
+| `config.backtest.freqai.json` | FreqAI backtest override (StaticPairList, mismos 8 pares) |
+| `ops/analyze_news.py` | News intelligence: batch Claude API call → ai_score por coin → `news_themes.json` |
+| `ops/fetch_sentiment.py` | Pipeline diario: F&G + CoinGecko trending + Binance spikes + RSS news |
 | `ops/trade.sh` | Production start script |
-| `ops/train_and_deploy.sh` | Periodic hyperopt + atomic deploy |
+| `ops/train_and_deploy.sh` | Hyperopt periódico + validación OOS 2022 + atomic deploy |
 | `change.Strategy.sh` | Switch strategy + restart service |
 | `freqtrade.service` | Systemd unit template |
 | `.github/workflows/deploy-freqtrade.yml` | CI/CD deploy pipeline |
+
+## Hyperopt — Plan Óptimo
+
+**Loss function**: `CalmarHyperOptLoss` (ratio profit/max drawdown) — mejor que `OnlyProfitHyperOptLoss` porque penaliza drawdowns grandes. Alternativa: `ProfitDrawDownHyperOptLoss`.
+
+**Timerange**: siempre incluir 2022 (bear extremo) para evitar overfit a bull markets.
+
+**Comando manual** (desde el directorio del proyecto):
+```bash
+conda run -n freqtrade freqtrade hyperopt \
+  -c config.base.json -c config.secrets.json \
+  -s MyStrategy \
+  --spaces buy sell stoploss \
+  --hyperopt-loss CalmarHyperOptLoss \
+  --timerange 20220101-20251231 \
+  -e 1500 -j -1 \
+  --random-state 42 \
+  --min-trades 10 \
+  --early-stop 300
+```
+
+**Validación OOS obligatoria** — tras hyperopt, correr backtest en 2022 aislado:
+```bash
+conda run -n freqtrade freqtrade backtesting \
+  -c config.base.json -c config.backtest.json -s MyStrategy \
+  --timerange 20220101-20221231 --cache none
+```
+- WR ≥ 55% en 2022 → aceptar params
+- WR < 40% → descartar (overfitting al bull market)
+
+**Nota crítica**: `--export-params` NO existe en freqtrade. Los params se exportan automáticamente a `user_data/strategies/CombinedBinHAndCluc.json`. El script `ops/train_and_deploy.sh` copia ese fichero a `ops/params.json` tras el hyperopt.
+
+**FreqAI backtest** (requiere datos 2023 para primer entrenamiento):
+```bash
+conda run -n freqtrade freqtrade backtesting \
+  -c config.base.json -c config.backtest.json \
+  -c config.backtest.freqai.json -c config.freqai.json \
+  -s FreqAIEnhanced15m --timerange 20240101-20241231 --cache none
+```
 
 ## Important Notes
 
