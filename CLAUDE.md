@@ -11,27 +11,42 @@ This is a **freqtrade** crypto trading bot configured for Binance spot trading w
 - Pairs: BTC, SOL, LINK, PEPE, SHIB, BONK, WIF, TURBO (vs USDC) — **8 pairs** (DOGE/ETH/ADA removed: consistently losing)
 - Timeframe: **15m** (migrated from 1h → more trades)
 - Max open trades: 5 | Stake: **unlimited** (~200 USDC/trade with 1000 USDC wallet)
-- Blacklisted: XRP, AVAX, LTC, DOGE, ETH, ADA (0 wins or consistent stop-losses across all timeframes tested)
+- Blacklisted: XRP, AVAX, LTC, DOGE, ETH, ADA, FLOKI (0 wins or consistent stop-losses across all timeframes tested)
 - Dry-run: enabled (1000 USDC simulated wallet)
 - API server: `0.0.0.0:8080`
+
+## Config Management
+
+Config is split into two files to allow versioning without exposing credentials:
+
+| File | Git | Purpose |
+|------|-----|---------|
+| `config.base.json` | ✅ committed | All non-sensitive settings (pairs, timeframe, pairlists, etc.) |
+| `config.secrets.json` | ❌ gitignored | API keys, Telegram token, API server credentials |
+| `config.secrets.json.example` | ✅ committed | Template showing required secret fields |
+| `config.backtest.json` | ✅ committed | StaticPairList override for reproducible backtests |
+
+**Setup on a new machine:** copy `config.secrets.json.example` → `config.secrets.json` and fill in values.
+
+**Server:** `ops/config.withparams.json` remains the single production config (set up manually on server).
 
 ## Common Commands
 
 ```bash
 # freqtrade via conda (no .venv — use conda env)
-conda run -n freqtrade freqtrade trade -c config.json
+conda run -n freqtrade freqtrade trade -c config.base.json -c config.secrets.json
 
-# Backtesting
-conda run -n freqtrade freqtrade backtesting -c config.json -c config.backtest.json -s MyStrategy --timerange 20240101-20241231 --cache none
+# Backtesting (no secrets needed)
+conda run -n freqtrade freqtrade backtesting -c config.base.json -c config.backtest.json -s MyStrategy --timerange 20240101-20241231 --cache none
 
 # Download historical data
-conda run -n freqtrade freqtrade download-data -c config.json -c config.backtest.json --timeframes 15m --timerange 20230101-20260303 --prepend
+conda run -n freqtrade freqtrade download-data -c config.base.json -c config.backtest.json --timeframes 15m --timerange 20230101-20260303 --prepend
 
 # Hyperopt (parameter optimization)
-conda run -n freqtrade freqtrade hyperopt -c config.json -s MyStrategy --spaces buy sell stoploss trailing --epochs 300
+conda run -n freqtrade freqtrade hyperopt -c config.base.json -c config.backtest.json -s MyStrategy --spaces buy sell stoploss --hyperopt-loss OnlyProfitHyperOptLoss --epochs 500 -j -1
 
 # Plot strategy on data
-conda run -n freqtrade freqtrade plot-dataframe -c config.json -s MyStrategy
+conda run -n freqtrade freqtrade plot-dataframe -c config.base.json -s MyStrategy
 
 # Create a new strategy from template
 conda run -n freqtrade freqtrade new-strategy -s MyNewStrategy
@@ -146,7 +161,9 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 
 | File | Purpose |
 |------|---------|
-| `config.json` | Bot configuration (exchange, pairs, stake, API server) |
+| `config.base.json` | Bot configuration (exchange, pairs, stake — no credentials) — committed |
+| `config.secrets.json` | API keys, Telegram token, API server credentials — gitignored |
+| `config.secrets.json.example` | Template for config.secrets.json — committed |
 | `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) |
 | `config.backtest.json` | Backtest override (StaticPairList, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) |
 | `ops/trade.sh` | Production start script |
@@ -158,8 +175,9 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 ## Important Notes
 
 - **Never pass CLI flags that override strategy parameters** when running in production — strategy reads from JSON config (`ops/config.withparams.json`).
-- `config.json` contains API credentials and is excluded from CI/CD sync. Keep it out of commits.
+- `config.secrets.json` contains API credentials and is gitignored. Never commit it. Copy from `config.secrets.json.example` to set up a new machine.
+- `config.base.json` is the versioned base config — safe to commit, no credentials.
 - When modifying `CombinedBinHAndCluc.py`, all tunable constants are at the top of the file — prefer changing those constants over touching the logic.
 - The `develop` branch is the main working branch (matches CI/CD trigger and freqtrade's own convention).
 - Use `conda run -n freqtrade` to run freqtrade — there is no `.venv`, the environment is in anaconda.
-- `config.backtest.json` is gitignored but must exist locally to run backtests.
+- `config.backtest.json` is committed and used for reproducible backtests (StaticPairList override).
