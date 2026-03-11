@@ -7,14 +7,19 @@ echo "[retrain] $(date -u +'%F %T') inicio"
 # ---------------------------------------------
 
 BASE="/home/ubuntu/freqtrade"
-CONF="$BASE/config.json"
 OPS="$BASE/ops"
 STRAT="CombinedBinHAndCluc"
-TF="5m"
+TF="15m"   # timeframe de la estrategia activa
 
-# Ventana rolling: entrena ~150 días y deja 15 días fuera si luego quieres validar
-TRAIN_START=$(date -u -d "150 days ago" +%Y%m%d)
-TRAIN_END=$(date -u -d "15 days ago" +%Y%m%d)
+# Config: base + secrets + params en cascada
+CONF_BASE="$BASE/config.base.json"
+CONF_SECRETS="$OPS/config.secrets.json"   # credenciales del servidor (no en repo)
+
+# Ventana rolling para hyperopt:
+# - Incluye 2022 bear (OOS de validación) + datos recientes
+# - Entrena con todos los datos disponibles para capturar patrones de todos los regímenes
+TRAIN_START="20220101"
+TRAIN_END=$(date -u -d "3 days ago" +%Y%m%d)
 TIMERANGE="${TRAIN_START}-${TRAIN_END}"
 
 EPOCHS=1200
@@ -22,31 +27,55 @@ BEST_TMP="$OPS/params_tmp.json"
 
 cd "$BASE"
 
-# Requisitos previos simples
+# Requisitos previos
 command -v jq >/dev/null || { echo "[retrain] ERROR: falta 'jq' (sudo apt-get install -y jq)"; exit 2; }
-test -f "$BASE/user_data/hyperoptloss/my_balanced_loss.py" || {
-  echo "[retrain] AVISO: no veo user_data/hyperoptloss/my_balanced_loss.py (usando MyBalancedLoss)."
-}
 
+# Seleccionar config según lo que esté disponible
+if [[ -f "$CONF_SECRETS" ]]; then
+  CONF_ARGS="-c $CONF_BASE -c $CONF_SECRETS"
+else
+  # Fallback: config todo-en-uno legacy (servidor viejo)
+  CONF_ARGS="-c $BASE/ops/config.withparams.json"
+fi
 
-echo "[retrain] descargando datos..."
-freqtrade download-data -t "$TF" --days 200
+echo "[retrain] descargando datos ${TF} desde ${TRAIN_START}..."
+# shellcheck disable=SC2086
+freqtrade download-data $CONF_ARGS -t "$TF" --timerange "${TRAIN_START}-$(date -u +%Y%m%d)" --prepend
 
-echo "[retrain] lanzando hyperopt (TPE)..."
-
+echo "[retrain] lanzando hyperopt (${EPOCHS} epochs, timerange ${TIMERANGE})..."
+# shellcheck disable=SC2086
 freqtrade hyperopt \
   -s "$STRAT" \
-  -c "$CONF" \
-  --spaces buy sell stoploss trailing protection \
-  --hyperopt-loss MyBalancedLoss \
+  $CONF_ARGS \
+  --spaces buy sell stoploss \
+  --hyperopt-loss OnlyProfitHyperOptLoss \
   --timerange "$TIMERANGE" \
   -e "$EPOCHS" \
+  -j -1 \
   --random-state 42 \
   --export-params "$BEST_TMP" \
   --no-color
 
-# Normaliza el JSON (algunas versiones exportan {"params":{...}})
+# ---- Validación OOS 2022 bear market ----
+# Antes de desplegar, asegúrate de que los nuevos parámetros no destrozan el OOS
+echo "[retrain] validando en 2022 OOS (bear market)..."
+# shellcheck disable=SC2086
+OOS_OUTPUT=$(freqtrade backtesting \
+  -s "$STRAT" \
+  $CONF_ARGS \
+  --timerange 20220101-20221231 \
+  --cache none 2>&1 || true)
 
+echo "$OOS_OUTPUT"
+# Extraer tasa de ganancias del output
+OOS_WIN=$(echo "$OOS_OUTPUT" | grep -oP 'Win\s+\K[\d.]+(?=\s*%)' | tail -1 || echo "0")
+echo "[retrain] Win rate 2022 OOS: ${OOS_WIN}%"
+if (( $(echo "$OOS_WIN < 50" | bc -l) )); then
+  echo "[retrain] WARN: Win rate < 50% en 2022 OOS (${OOS_WIN}%). Revisa antes de desplegar."
+  echo "[retrain] Nuevos parámetros guardados en $BEST_TMP.norm para revisión manual."
+fi
+
+# Normaliza el JSON (algunas versiones exportan {"params":{...}})
 if jq -e 'has("params")' "$BEST_TMP" >/dev/null; then
   jq '.params' "$BEST_TMP" > "$BEST_TMP.norm"
 else
@@ -66,7 +95,6 @@ if [[ -f "$OPS/params.json" ]] && cmp -s "$BEST_TMP.norm" "$OPS/params.json"; th
 fi
 
 # Despliegue atómico
-
 echo "[retrain] desplegando nuevos parámetros..."
 install -m 0644 "$BEST_TMP.norm" "$OPS/params.json.new"
 mv -f "$OPS/params.json.new" "$OPS/params.json"
@@ -80,5 +108,3 @@ echo "[retrain] ok. mejores parámetros aplicados."
 # housekeeping: borra resultados/historicos viejos
 find "$BASE/user_data/hyperopt_results" -type f -mtime +30 -delete || true
 find "$BASE/user_data/logs"            -type f -mtime +14 -delete || true
-
-
