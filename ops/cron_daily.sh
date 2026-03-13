@@ -22,14 +22,9 @@ echo "[cron_daily] $(date -u +'%F %T') UTC — inicio"
 echo "[cron_daily] step 1: fetch_sentiment (Fear&Greed + trending + noticias)"
 python3 "$OPS/fetch_sentiment.py" && echo "[cron_daily] fetch_sentiment OK" || echo "[cron_daily] WARN: fetch_sentiment falló (no fatal)"
 
-# 2. Análisis temático con Claude AI (solo si hay ANTHROPIC_API_KEY)
-# Lee la key de ops/.env automáticamente
-if [[ -f "$OPS/.env" ]] && grep -q "ANTHROPIC_API_KEY" "$OPS/.env"; then
-  echo "[cron_daily] step 2: analyze_news (Claude AI batch)"
-  python3 "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
-else
-  echo "[cron_daily] step 2: skipped (no ANTHROPIC_API_KEY en ops/.env)"
-fi
+# 2. Análisis temático — funciona con TAVILY_API_KEY o ANTHROPIC_API_KEY (o keywords fallback)
+echo "[cron_daily] step 2: analyze_news (Tavily+keywords o Claude AI)"
+python3 "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
 
 echo "[cron_daily] $(date -u +'%F %T') UTC — fin"
 
