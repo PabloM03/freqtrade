@@ -685,6 +685,50 @@ class MyStrategy(IStrategy):
         except Exception:
             return False
 
+    # ---------------------- POSITION SIZING (news-aware) ----------------------
+    def custom_stake_amount(
+        self,
+        pair: str,
+        current_time,
+        current_rate,
+        proposed_stake: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        leverage,
+        entry_tag,
+        side,
+    ) -> float:
+        """
+        Ajusta el tamaño de la posición según el ai_score de noticias del día.
+
+        Lógica:
+          ai_score >= +0.25 (noticias positivas claras) → stake × 1.5
+          ai_score <= -0.25 (noticias negativas claras) → stake × 0.6
+          entre -0.25 y +0.25 (neutral/sin datos)       → stake × 1.0
+
+        Restricciones:
+          - Nunca supera max_stake (capital disponible)
+          - Nunca baja de min_stake (mínimo del exchange)
+          - En backtest siempre ai_score = 0 → sin efecto sobre resultados históricos
+        """
+        try:
+            coin = pair.split('/')[0]
+            score = self._ai_scores.get(coin, 0.0) if hasattr(self, '_ai_scores') else 0.0
+
+            if score >= 0.25:
+                multiplier = 1.5   # noticias positivas → apostar más
+            elif score <= -0.25:
+                multiplier = 0.6   # noticias negativas → apostar menos
+            else:
+                multiplier = 1.0   # neutral
+
+            adjusted = proposed_stake * multiplier
+            if min_stake is not None:
+                adjusted = max(adjusted, min_stake)
+            return min(adjusted, max_stake)
+        except Exception:
+            return proposed_stake
+
     # ---------------------- EXITS (alineadas con picos/vales óptimos) ----------------------
     def custom_exit(
         self,
