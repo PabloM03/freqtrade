@@ -42,27 +42,30 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           TARGET_DIR: ${{ secrets.TARGET_DIR }}
         run: |
-          RSYNC_EXCLUDES="--exclude .git/ \
-                          --exclude .github/ \
-                          --exclude .gitignore \
-                          --exclude config.json \
-                          --exclude config.secrets.json \
-                          --exclude ops/config.withparams.json \
-                          --exclude ops/params.json \
-                          --exclude '*.sqlite' \
-                          --exclude '*.sqlite-shm' \
-                          --exclude '*.sqlite-wal' \
-                          --exclude logs/ \
-                          --exclude user_data/data/ \
-                          --exclude user_data/models/ \
-                          --exclude user_data/hyperopt_results/ \
-                          --exclude 'user_data/backtest_results/*.json' \
-                          --exclude 'user_data/backtest_results/*.zip' \
-                          --exclude __pycache__/ \
-                          --exclude */__pycache__/ \
-                          --exclude CLAUDE.md \
-                          --exclude .claude/"
-          rsync -az --delete $RSYNC_EXCLUDES \
+          # IMPORTANTE: los --exclude van como opciones directas (NO en variable con comillas
+          # embebidas) para que bash los procese correctamente y rsync reciba los patrones sin
+          # comillas literales (bug previo: '*.sqlite' dentro de var = no matcheaba nada → --delete borraba el sqlite)
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.gitignore' \
+            --exclude='config.json' \
+            --exclude='config.secrets.json' \
+            --exclude='ops/config.withparams.json' \
+            --exclude='ops/params.json' \
+            --exclude='*.sqlite' \
+            --exclude='*.sqlite-shm' \
+            --exclude='*.sqlite-wal' \
+            --exclude='logs/' \
+            --exclude='user_data/data/' \
+            --exclude='user_data/models/' \
+            --exclude='user_data/hyperopt_results/' \
+            --exclude='user_data/backtest_results/*.json' \
+            --exclude='user_data/backtest_results/*.zip' \
+            --exclude='__pycache__/' \
+            --exclude='*/__pycache__/' \
+            --exclude='CLAUDE.md' \
+            --exclude='.claude/' \
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 

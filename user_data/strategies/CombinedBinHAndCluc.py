@@ -487,12 +487,16 @@ class MyStrategy(IStrategy):
         )
 
         # F) RSI extremo (<25) + rebote + MACD girando (señal de capitulación selectiva)
+        # Gate de noticias: no entrar en F si noticias del día son claramente negativas para esta coin
+        # (en backtest ai_score=0 siempre → gate siempre True → sin efecto histórico)
+        news_not_bearish = (dataframe['ai_score'] > -0.25)
         F = (
             (dataframe['rsi'] < self.buy_f_rsi_max.value) &
             (dataframe['rsi'] > dataframe['rsi_prev']) &        # RSI subiendo
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             dataframe['vol_spike'] &                            # volumen confirmado
-            (bb_zone_ok)
+            (bb_zone_ok) &
+            news_not_bearish                                    # noticias no bajistas
         )
 
         # G) Hammer en zona baja con fuerte confirmación (selectivo — solo hammers de calidad)
