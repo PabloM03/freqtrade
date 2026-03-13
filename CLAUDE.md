@@ -170,7 +170,7 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **`trades.sqlite` preservado**: rsync excluye `*.sqlite`, `*.sqlite-wal`, `*.sqlite-shm` → el historial de operaciones y estado del bot sobreviven cada deploy. Validado con dry-run Mar 2026.
 - **Systemd service**: `freqtrade.service` runs the bot as a daemon; restart via `sudo systemctl restart freqtrade`.
 - **`ops/trade.sh`**: production start script — intenta `config.base.json + config.secrets.json`, cae a `ops/config.withparams.json` (legacy) si no existen ambos.
-- **`ops/cron_daily.sh`**: instalar en el servidor como cron: `10 0 * * * /home/ubuntu/freqtrade/ops/cron_daily.sh >> /home/ubuntu/freqtrade/logs/cron_daily.log 2>&1`. Requiere `ANTHROPIC_API_KEY` en `.env`.
+- **`ops/cron_daily.sh`**: instalar en el servidor como cron: `10 0 * * * /home/ubuntu/freqtrade/ops/cron_daily.sh >> /home/ubuntu/freqtrade/logs/cron_daily.log 2>&1`. Requiere `TAVILY_API_KEY` en `ops/.env` (o fallback keywords sin key). Setup automático con `bash ops/setup_server.sh <TAVILY_KEY>`.
 - **`ops/train_and_deploy.sh`**: rolling hyperopt script — downloads data desde 20220101 (incluye 2022 bear OOS), corre 1200 epochs con `CalmarHyperOptLoss` (profit/drawdown), valida en OOS 2022 (aborta si WR < 40%), despliega params atómicamente y reinicia el servicio.
 
 ### Pairlist & filtering
@@ -190,7 +190,8 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 | `config.backtest.freqai.json` | FreqAI backtest override (StaticPairList, mismos 8 pares) |
 | `ops/analyze_news.py` | News intelligence: batch Claude API call → ai_score por coin → `news_themes.json` |
 | `ops/fetch_sentiment.py` | Pipeline diario: F&G + CoinGecko trending + Binance spikes + RSS news |
-| `ops/cron_daily.sh` | Cron 00:10 UTC: fetch_sentiment + analyze_news (requiere ANTHROPIC_API_KEY en .env) |
+| `ops/cron_daily.sh` | Cron 00:10 UTC: fetch_sentiment + analyze_news (TAVILY_API_KEY o keywords fallback) |
+| `ops/setup_server.sh` | Setup único del servidor: pip install + ops/.env + cron. Usar: `bash ops/setup_server.sh <TAVILY_KEY>` |
 | `ops/trade.sh` | Production start script |
 | `ops/train_and_deploy.sh` | Hyperopt periódico + validación OOS 2022 + atomic deploy |
 | `change.Strategy.sh` | Switch strategy + restart service |
