@@ -11,6 +11,10 @@ Diferencia clave vs sentiment simple (keywords bullish/bearish):
 El modelo interpreta el CONTEXTO y las CONSECUENCIAS para cada coin,
 no solo si aparecen palabras clave.
 
+Fuentes de noticias (orden de prioridad):
+  1. Tavily Search API (TAVILY_API_KEY en ops/.env) — búsquedas web en tiempo real
+  2. RSS feeds (fallback si no hay Tavily key) — Cointelegraph, Decrypt, Google News
+
 Mapa temático para nuestras 8 monedas:
   BTC    — bitcoin macro, ETF, institutional, strategic reserve, halving
   SOL    — solana ecosystem, DeFi SOL, NFT SOL, AI en Solana
@@ -22,7 +26,7 @@ Mapa temático para nuestras 8 monedas:
   TURBO  — meme coin, AI-generated meme
 
 USO:
-  python3 ops/analyze_news.py              # analiza noticias RSS de hoy
+  python3 ops/analyze_news.py              # analiza noticias de hoy
   python3 ops/analyze_news.py --hours 48   # últimas 48h de noticias
   python3 ops/analyze_news.py --dry-run    # muestra análisis sin guardar
 
@@ -31,8 +35,10 @@ SALIDA:
   user_data/data/sentiment/news_themes.csv    — histórico para backtest
 
 REQUIERE:
-  pip install anthropic  (o conda install -c conda-forge anthropic)
-  ANTHROPIC_API_KEY en ops/.env
+  TAVILY_API_KEY en ops/.env  (recomendado — mejor calidad de noticias)
+  pip install tavily-python    (solo si se usa Tavily)
+  ANTHROPIC_API_KEY en ops/.env (opcional — mejora análisis con Claude)
+  pip install anthropic         (solo si se usa Claude)
 """
 
 import json, csv, argparse, urllib.request, xml.etree.ElementTree as ET
@@ -57,6 +63,7 @@ def load_env() -> dict:
 
 ENV = load_env()
 ANTHROPIC_KEY = ENV.get("ANTHROPIC_API_KEY", "")
+TAVILY_KEY    = ENV.get("TAVILY_API_KEY", "")
 
 # ── Mapeo temático → coins afectadas ──────────────────────────────────────────
 # Cada tema tiene sus coins "primarias" (directamente afectadas) y
@@ -221,8 +228,66 @@ Responde SOLO con JSON válido (sin markdown, sin texto extra):
 Solo incluye coins con |ai_score| >= 0.15. Si no hay noticias relevantes, devuelve coin_signals vacío."""
 
 
+TAVILY_QUERIES = [
+    "bitcoin crypto news today",
+    "solana ethereum defi news",
+    "crypto regulation SEC news",
+    "meme coins pepe bonk wif news",
+    "trump crypto bitcoin policy",
+]
+
+
+def fetch_with_tavily(hours_back: int = 24) -> list[dict]:
+    """Busca noticias crypto con Tavily Search API."""
+    try:
+        from tavily import TavilyClient
+    except ImportError:
+        print("[Tavily] 'tavily-python' no instalado. Usa: pip install tavily-python")
+        return []
+
+    if not TAVILY_KEY:
+        return []
+
+    client = TavilyClient(api_key=TAVILY_KEY)
+    articles = []
+    seen_titles = set()
+
+    for query in TAVILY_QUERIES:
+        try:
+            resp = client.search(
+                query=query,
+                search_depth="basic",
+                max_results=5,
+                include_answer=False,
+            )
+            for r in resp.get("results", []):
+                title = (r.get("title") or "").strip()
+                if not title or title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                articles.append({
+                    "title":       title,
+                    "description": (r.get("content") or "")[:600],
+                    "published":   datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                    "source":      (r.get("url") or "").split("/")[2] if r.get("url") else "tavily",
+                    "url":         r.get("url") or "",
+                })
+        except Exception as e:
+            print(f"  [Tavily] Error en query '{query}': {e}")
+
+    print(f"[Tavily] {len(articles)} artículos únicos")
+    return articles
+
+
 def fetch_recent_news(hours_back: int = 24) -> list[dict]:
-    """Descarga y parsea artículos RSS de las últimas N horas."""
+    """Descarga noticias: Tavily si hay key, RSS como fallback."""
+    if TAVILY_KEY:
+        articles = fetch_with_tavily(hours_back)
+        if articles:
+            return articles
+        print("[News] Tavily sin resultados, cayendo a RSS...")
+
+    # RSS fallback
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
     articles = []
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/rss+xml,*/*"}
@@ -265,7 +330,7 @@ def fetch_recent_news(hours_back: int = 24) -> list[dict]:
                     "url": link,
                 })
 
-    print(f"[News] {len(articles)} artículos únicos de las últimas {hours_back}h")
+    print(f"[RSS] {len(articles)} artículos únicos de las últimas {hours_back}h")
     return articles
 
 
@@ -491,10 +556,11 @@ def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int 
     Pipeline principal: fetch → analyze (1 sola llamada API) → save.
     Coste estimado: ~$0.001/ejecución con claude-haiku-4-5 (vs ~$0.05 con método por-artículo).
     """
-    api_status = "✅ key encontrada" if ANTHROPIC_KEY else "⚠ sin key (fallback keywords)"
+    news_src   = "Tavily" if TAVILY_KEY else "RSS"
+    api_status = "✅ Claude" if ANTHROPIC_KEY else ("✅ Tavily+keywords" if TAVILY_KEY else "⚠ keywords only")
     print(f"\n{'='*60}")
     print(f"  AI News Analysis — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"  Modelo: claude-haiku-4-5 | API: {api_status}")
+    print(f"  Noticias: {news_src} | Análisis: {api_status}")
     print(f"{'='*60}\n")
 
     # 1. Fetch news
