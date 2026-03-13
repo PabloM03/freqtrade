@@ -21,9 +21,9 @@
       "buy_ema50_close_pct": 0.989,
       "buy_ema50_slope_48h": 0.986,
       "buy_f_rsi_max": 37,
+      "buy_fg_fear": 30,
       "buy_g_bb_zone": 0.42,
       "buy_g_vol_mult": 2.8,
-      "buy_fg_fear": 30,
       "buy_i_rsi_crash": 18
     },
     "sell": {
@@ -36,5 +36,5 @@
     }
   },
   "ft_stratparam_v": 1,
-  "export_time": "2026-03-04 14:30:00.000000+00:00"
+  "export_time": "2026-03-04 11:38:16.783082+00:00"
 }

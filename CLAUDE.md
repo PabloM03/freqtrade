@@ -84,15 +84,17 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - **BB windows** (already scaled): BB80 (20h equiv), BB180 (45h equiv)
 - **Rolling lookbacks** (×4): ll_8→32, ll_10→40, ll_20→80, hh_20→80, roc5→roc20
 
-**8 entry conditions (A–H):**
+**10 entry conditions (A–J):**
 - **A** `A_local_min`: loc_trough + ll_10 + bb_deep_zone(≤0.20) + RSI turning up + green candle + vol_spike + MACD>0
 - **B** `B_bb_reentry`: 2+ consecutive candles below BB80 → crossing back above + RSI up + MACD not worsening
 - **C** `C_stochrsi`: StochRSI(14,3,3) cross oversold (k>d, both <25) + MACD not worsening + EMA80 flat over 4h
 - **D** `D_capitulation`: big drop + tail ≥ ATR(56) × 1.15 + green candle
 - **E** `E_ema8_pullback`: cross above EMA32 + EMA32 rising + RSI strong
-- **F** `F_rsi_extreme`: RSI < 25 + RSI up + MACD not worsening + vol_spike + bb_zone_ok
+- **F** `F_rsi_extreme`: RSI < 25 + RSI up + MACD not worsening + vol_spike + bb_zone_ok + **ai_score > -0.25** (news gate: no entrar en F con noticias bajistas)
 - **G** `G_hammer`: hammerish candle + bb_percent ≤ 0.42 + vol > 2.8x mean + RSI up + MACD + directional alcista
 - **H** `H_panic_fear`: Fear&Greed < 30 (Extreme Fear) + loc_trough + RSI < 42 + RSI up + MACD + vol_spike + bb_zone (contrarian: añade entradas en pánico macro)
+- **I** `I_rsi_crash`: RSI ultra-extremo (< 18) + loc_trough + RSI up + MACD + vol_spike + bb_percent ≤ 0.35 — bypass de anti_chase, señal de capitulación máxima
+- **J** `J_ai_news`: ai_score ≥ 0.30 (noticias muy positivas para este coin) + loc_trough + RSI < 50 + RSI up + MACD + vol_spike + bb_zone — solo activo en live trading (backtest ai_score=0)
 
 **Triple trend filter (ema50_ok) — uses hyperopt-tuned params:**
 - EMA200(15m) not falling >1.4% in 48h (shift(192) × 0.986)
@@ -101,11 +103,13 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 
 **Custom exits:** crash guard, hard_tp (**50%** — deja correr memes), peak exits ≥2.7%, HH+EMA32 break ≥5.5%
 
-**Hyperopt parameters v2** (500 epochs, OnlyProfitHyperOptLoss, 2024+2025 combined, saved in `CombinedBinHAndCluc.json`):
+**Hyperopt parameters v2 (DEFINITIVOS)** (500 epochs, OnlyProfitHyperOptLoss, 2024+2025, guardados en `CombinedBinHAndCluc.json`):
 - `buy_c_stoch_max=36`, `buy_bb_zone_ok=0.68`, `buy_a_rsi_prev_max=38`, `buy_f_rsi_max=37`
 - `buy_ema50_close_pct=0.989`, `buy_ema50_slope_48h=0.986`, `buy_ema20_slope_24h=0.948`
 - `buy_g_bb_zone=0.42`, `buy_g_vol_mult=2.8`, `buy_fg_fear=30`
 - `sell_peak_min_profit=0.027`, `sell_hh_ema_min=0.055`, `stoploss=-0.347`
+
+**Nota hyperopt CalmarHyperOptLoss (2022-2025, 1500 epochs):** Probado en Mar 2026 — encontró stoploss=-0.054 (5.4%), +22.21%, Calmar 13.30. **DESCARTADO** — peor que params actuales en profit (+22% vs +55%) y Calmar (13 vs 19). CalmarHyperOptLoss en 4 años sobreajusta a evitar el bear 2022 a costa del bull 2024-2025. Mantener params v2.
 
 **Fear & Greed Index integration:**
 - Data source: `user_data/data/sentiment/fear_greed.csv` (Alternative.me API, daily, 2018+)
@@ -113,7 +117,16 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - H fires when F&G < 30 (Extreme Fear) + loc_trough → contrarian entries in max panic moments
 - Effect: 2024/2025 unchanged, 2022 OOS +1 extra winner trade
 
-**Backtest results (15m, ~200 USDC/trade, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) — v4 (Fear&Greed):**
+**News intelligence pipeline (v5 — live only):**
+- `ops/fetch_sentiment.py` — daily: Fear&Greed, CoinGecko trending, Binance volume spikes, RSS news
+- `ops/analyze_news.py` — batch Claude API → `ai_score` por coin (-1 a +1) → `user_data/data/sentiment/news_themes.json`
+- `ops/cron_daily.sh` — cron diario 00:10 UTC: fetch_sentiment + analyze_news (requiere ANTHROPIC_API_KEY en .env del servidor)
+- **F condition news gate**: `ai_score > -0.25` — no entrar en F_rsi_extreme si noticias bajistas para ese coin
+- **J condition**: `ai_score ≥ 0.30` + loc_trough + RSI < 50 — entrada directa por noticias muy positivas
+- **Position sizing** (`custom_stake_amount`): ai_score ≥ 0.25 → 1.5× stake; ai_score ≤ -0.25 → 0.6× stake; neutral → 1×
+- En backtest: ai_score = 0 siempre → sin efecto en resultados históricos (solo afecta en live)
+
+**Backtest results (15m, ~200 USDC/trade, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) — v5 (news + position sizing; backtest = v4 ya que ai_score=0 en backtest):**
 - 2022 (OOS bear): **8 trades, 87.5% WR, +3.93% (+39.3 USDC)**, max drawdown 0.82% ✅
 - 2023 (OOS recovery): **0 trades** — anti_chase blocks entries in relentless uptrend (by design)
 - 2024 (in-sample): **20 trades, 85.0% WR, +234.36 USDC (+23.44%)**, max drawdown 5.04%
@@ -131,12 +144,14 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 
 | Strategy | 2022 | 2023 | 2024 | 2025 | Total |
 |---|---|---|---|---|---|
-| **MyStrategy v4 (F&G, DEPLOYED)** | **+3.93%** | 0% | **+23.44%** | **+31.24%** | **+62% compuesto** |
+| **MyStrategy v5 (news+sizing, DEPLOYED)** | **+3.93%** | 0% | **+23.44%** | **+31.24%** | **+62% compuesto** |
+| MyStrategy v4 (F&G) | +3.93% | 0% | +23.44% | +31.24% | +62% compuesto |
 | MyStrategy v3 (8 pairs) | +2.47% | 0% | +23.44% | +31.24% | +62% compuesto |
 | MyStrategy v2 (11 pairs) | +1.81% | 0% | +22.42% | +22.38% | +48.03% |
 | MyStrategy v1 (old) | -3.18% | 0% | +8.02% | +9.62% | +14.46% |
-| FreqAI Hybrid | N/A | N/A | 0 trades | +3.57% | failed |
-| TrendFollowing15m | -17.5% | — | — | — | failed |
+| FreqAI standalone | N/A | N/A | -10.71% | — | DESCARTADO |
+| FreqAI como filtro | N/A | N/A | 0 trades | +3.57% | DESCARTADO |
+| TrendFollowing15m | -17.5% | — | — | — | DESCARTADO |
 
 **Why no 2023 trades:** anti_chase filter correctly blocks buying in relentless uptrend (price above EMA80/BB_mid). Strategy is reversal-only → only enters on genuine dips. Missing 2023 rally is a design trade-off for safety.
 
@@ -146,12 +161,16 @@ Strategies live in `user_data/strategies/` and extend `IStrategy`. Key methods t
 - v1 (Jan 2025): 37 trades, 57% WR, +176.47 USDC (2 years)
 - v2 (Mar 2026): 52 trades, 75% WR avg, +448 USDC (2 years) — HARD_TP 25%→50%, G condition, expanded hyperopt ranges
 - v3 (Mar 2026): **44 trades, 82% WR avg, +62% compuesto** — Blacklisted DOGE/ETH/ADA, 8-pair optimal list
-- v4 (Mar 2026): **Same 2024+2025 + 2022 OOS +3.93% (was +2.47%)** — Fear&Greed Index integrado, condición H_panic_fear ← CURRENT
+- v4 (Mar 2026): **Same 2024+2025 + 2022 OOS +3.93% (was +2.47%)** — Fear&Greed Index integrado, condición H_panic_fear
+- v5 (Mar 2026): **42 trades, 81% WR, +55.53%, Calmar 19.19** — News intelligence: condiciones I+J, F news gate, position sizing por ai_score, rsync bug fix ← CURRENT
 
 ### Deployment & CI/CD
 - **GitHub Actions** (`.github/workflows/deploy-freqtrade.yml`): pushes to `develop` trigger an `rsync` to the production server and restart the systemd service. `config.json` is **excluded** from sync to preserve live credentials.
+- **rsync bug fix (Mar 2026):** Los `--exclude` deben ir como opciones directas en rsync, NO dentro de una variable bash con comillas embebidas. `--exclude '*.sqlite'` dentro de una variable se pasa como `'*.sqlite'` (con comillas literales) → rsync no matchea `trades.sqlite` → `--delete` lo borraba en cada deploy. Fix: opciones directas `--exclude='*.sqlite'`.
+- **`trades.sqlite` preservado**: rsync excluye `*.sqlite`, `*.sqlite-wal`, `*.sqlite-shm` → el historial de operaciones y estado del bot sobreviven cada deploy. Validado con dry-run Mar 2026.
 - **Systemd service**: `freqtrade.service` runs the bot as a daemon; restart via `sudo systemctl restart freqtrade`.
-- **`ops/trade.sh`**: production start script (uses `ops/config.withparams.json`, not root `config.json`).
+- **`ops/trade.sh`**: production start script — intenta `config.base.json + config.secrets.json`, cae a `ops/config.withparams.json` (legacy) si no existen ambos.
+- **`ops/cron_daily.sh`**: instalar en el servidor como cron: `10 0 * * * /home/ubuntu/freqtrade/ops/cron_daily.sh >> /home/ubuntu/freqtrade/logs/cron_daily.log 2>&1`. Requiere `ANTHROPIC_API_KEY` en `.env`.
 - **`ops/train_and_deploy.sh`**: rolling hyperopt script — downloads data desde 20220101 (incluye 2022 bear OOS), corre 1200 epochs con `CalmarHyperOptLoss` (profit/drawdown), valida en OOS 2022 (aborta si WR < 40%), despliega params atómicamente y reinicia el servicio.
 
 ### Pairlist & filtering
@@ -164,13 +183,14 @@ The active pairlist uses `VolumePairList` (top 40 by quote volume ≥100K USDC, 
 | `config.base.json` | Bot configuration (exchange, pairs, stake — no credentials) — committed |
 | `config.secrets.json` | API keys, Telegram token, API server credentials — gitignored |
 | `config.secrets.json.example` | Template for config.secrets.json — committed |
-| `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) — reversal 15m, 8 condiciones A-J |
-| `user_data/strategies/FreqAIEnhanced15m.py` | Estrategia FreqAI (condición K) — clasificador LightGBM, standalone para comparativa |
+| `user_data/strategies/CombinedBinHAndCluc.py` | Active strategy (`MyStrategy`) — reversal 15m, 10 condiciones A-J |
+| `user_data/strategies/FreqAIEnhanced15m.py` | Estrategia FreqAI — LightGBMRegressor, **DESCARTADA** (standalone -10%, como filtro 0 trades) |
 | `config.backtest.json` | Backtest override (StaticPairList, 8 pairs: BTC/SOL/LINK/PEPE/SHIB/BONK/WIF/TURBO) |
 | `config.freqai.json` | FreqAI overlay: LightGBMClassifier, train_period=90d, label=48 candles (12h), v3 |
 | `config.backtest.freqai.json` | FreqAI backtest override (StaticPairList, mismos 8 pares) |
 | `ops/analyze_news.py` | News intelligence: batch Claude API call → ai_score por coin → `news_themes.json` |
 | `ops/fetch_sentiment.py` | Pipeline diario: F&G + CoinGecko trending + Binance spikes + RSS news |
+| `ops/cron_daily.sh` | Cron 00:10 UTC: fetch_sentiment + analyze_news (requiere ANTHROPIC_API_KEY en .env) |
 | `ops/trade.sh` | Production start script |
 | `ops/train_and_deploy.sh` | Hyperopt periódico + validación OOS 2022 + atomic deploy |
 | `change.Strategy.sh` | Switch strategy + restart service |
