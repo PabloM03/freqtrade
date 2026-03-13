@@ -13,14 +13,12 @@ Backtest:
 Nota: necesita datos 2023 para el primer entrenamiento (train_period_days=90).
 """
 import freqtrade.vendor.qtpylib.indicators as qtpylib
-import numpy as np
-import pandas as pd
 import talib.abstract as ta
-from freqtrade.strategy import IFreqaiStrategy, DecimalParameter
+from freqtrade.strategy import IStrategy, DecimalParameter
 from pandas import DataFrame
 
 
-class FreqAIEnhanced15m(IFreqaiStrategy):
+class FreqAIEnhanced15m(IStrategy):
     """
     Clasificador LightGBM que aprende cuándo el mercado va a subir >= 1.5% en 12h.
     Se usa como condición K: señal additive (no filtro) sobre la estrategia base.
@@ -94,29 +92,17 @@ class FreqAIEnhanced15m(IFreqaiStrategy):
         self, dataframe: DataFrame, metadata: dict, **kwargs
     ) -> DataFrame:
         """
-        Features de estructura de precio + target variable del clasificador.
+        Solo define el target. Las features estructurales ya están en expand_all/expand_basic.
+
+        Nota: LightGBMClassifier es incompatible con pandas 3.0 en esta versión de
+        freqtrade (el check `dtype == object` falla para strings en pandas 3.x, que
+        los almacena como dtype='str'). Usamos LightGBMRegressor con target numérico.
         """
-        ema80 = ta.EMA(dataframe, timeperiod=80)
-        ema200 = ta.EMA(dataframe, timeperiod=200)
-
-        dataframe["%-close_ema80"] = dataframe["close"] / (ema80 + 1e-9)
-        dataframe["%-close_ema200"] = dataframe["close"] / (ema200 + 1e-9)
-        dataframe["%-ema80_ema200"] = ema80 / (ema200 + 1e-9)
-
-        # Pendiente de EMA200 en 48 velas (24h contexto tendencia)
-        dataframe["%-ema200_slope"] = (ema200 - ema200.shift(48)) / (ema200.shift(48) + 1e-9)
-
-        # Hora del día (patrón intraday en crypto)
-        dataframe["%-hour_sin"] = np.sin(2 * np.pi * pd.to_datetime(dataframe["date"]).dt.hour / 24)
-        dataframe["%-hour_cos"] = np.cos(2 * np.pi * pd.to_datetime(dataframe["date"]).dt.hour / 24)
-
-        # ---- Target variable (clasificador binario) ----
-        # Label "up": el precio sube >= 1.5% en las próximas 48 velas (12h)
-        # Label "down": el precio sube < 1.5% (o baja)
-        future_close = dataframe["close"].shift(-48)
-        dataframe["&-s_target"] = np.where(
-            future_close >= dataframe["close"] * 1.015, "up", "down"
-        )
+        # ---- Target: % de retorno en las próximas 48 velas (12h) ----
+        # Regressor predice retorno futuro; entrada cuando predicción > 0.5%
+        dataframe["&-s_target"] = (
+            dataframe["close"].shift(-48) / dataframe["close"] - 1
+        ) * 100
 
         return dataframe
 
@@ -163,14 +149,13 @@ class FreqAIEnhanced15m(IFreqaiStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Condición K: el clasificador predice subida + precio en zona de valor.
+        Condición K: el regresor predice retorno > 0.5% en 12h + precio en zona de valor.
 
-        Columnas que añade FreqAI (para LightGBMClassifier):
-          - &-s_target_pred    → label predicho ("up" o "down")
-          - &-s_target_up      → probabilidad de clase "up"  [0..1]
-          - do_predict         → 1 si el modelo tiene confianza, 0 si outlier
+        Columnas que añade FreqAI (LightGBMRegressor):
+          - &-s_target    → retorno predicho (% en 12h)
+          - do_predict    → 1 si el modelo tiene confianza, 0 si outlier
         """
-        pred_col = "&-s_target_pred"
+        pred_col = "&-s_target"
 
         if pred_col not in dataframe.columns:
             # FreqAI no configurado o primer startup sin modelo aún
@@ -180,15 +165,9 @@ class FreqAIEnhanced15m(IFreqaiStrategy):
         # Filtro de confianza del modelo (do_predict = 1: in-distribution)
         model_confident = (dataframe["do_predict"] == 1)
 
-        # Predicción alcista
-        freqai_up = (dataframe[pred_col] == "up")
-
-        # Umbral de probabilidad si está disponible (mayor convicción)
-        prob_col = "&-s_target_up"
-        if prob_col in dataframe.columns:
-            high_confidence = (dataframe[prob_col] >= 0.60)
-        else:
-            high_confidence = pd.Series(True, index=dataframe.index)
+        # Regresor predice retorno positivo > 0.5% en 12h
+        # Threshold bajo (no filtro, señal additive) — umbral mínimo para no entrar en pérdida esperada
+        freqai_bullish = (dataframe[pred_col] > 0.5)
 
         # Filtros técnicos (precio en zona de valor, no overbought, no en caída libre)
         in_value_zone = (dataframe["bb_percent"] <= self.buy_bb_zone_ok.value)
@@ -199,8 +178,7 @@ class FreqAIEnhanced15m(IFreqaiStrategy):
 
         K = (
             model_confident &
-            freqai_up &
-            high_confidence &
+            freqai_bullish &
             in_value_zone &
             rsi_ok &
             trend_ok &

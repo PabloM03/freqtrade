@@ -1,14 +1,14 @@
 {
+  "freqaimodel": "LightGBMRegressor",
   "freqai": {
     "enabled": true,
-    "model": "LightGBMClassifier",
     "purge_old_models": 2,
     "train_period_days": 90,
     "backtest_period_days": 30,
     "live_retrain_hours": 168,
-    "identifier": "lgbm-clf-v3",
+    "identifier": "lgbm-reg-v2",
     "feature_parameters": {
-      "include_timeframes": ["15m", "1h"],
+      "include_timeframes": ["15m"],
       "include_corr_pairlist": ["BTC/USDC"],
       "label_period_candles": 48,
       "include_shifted_candles": 2,
@@ -17,7 +17,7 @@
       "indicator_periods_candles": [8, 20, 40]
     },
     "data_split_parameters": {
-      "test_size": 0.20,
+      "test_size": 0.0,
       "shuffle": false
     },
     "model_training_parameters": {
@@ -28,7 +28,6 @@
       "feature_fraction": 0.8,
       "bagging_fraction": 0.8,
       "bagging_freq": 5,
-      "class_weight": "balanced",
       "verbose": -1
     }
   }
