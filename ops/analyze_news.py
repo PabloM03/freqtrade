@@ -136,7 +136,47 @@ THEME_COIN_MAP = {
     },
 }
 
-OUR_COINS = ["BTC", "SOL", "LINK", "PEPE", "SHIB", "BONK", "WIF", "TURBO"]
+# Coins siempre analizadas (whitelist fija)
+FIXED_COINS = ["BTC", "SOL", "LINK", "PEPE", "SHIB", "BONK", "WIF", "TURBO"]
+
+# Coins a excluir del VolumePairList (stablecoins, blacklisted, ya en FIXED_COINS)
+VOLUME_BLACKLIST = {
+    "USDT", "USDC", "BUSD", "DAI", "FDUSD", "TUSD", "USDP",  # stablecoins
+    "XRP", "AVAX", "LTC", "DOGE", "ETH", "ADA", "FLOKI",      # blacklisted en estrategia
+}
+
+# Alias para compatibilidad con código existente (se sobreescribe en run_analysis)
+OUR_COINS = FIXED_COINS[:]
+
+
+def fetch_volume_pairs(top_n: int = 40, quote: str = "USDC") -> list:
+    """
+    Obtiene los top N coins por volumen USDC en Binance en las últimas 24h.
+    Mismo universo que el VolumePairList de freqtrade.
+    """
+    try:
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            tickers = json.loads(r.read())
+
+        usdc = [
+            t for t in tickers
+            if t["symbol"].endswith(quote) and float(t.get("quoteVolume", 0)) > 100_000
+        ]
+        usdc.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
+
+        coins = []
+        for t in usdc[:top_n]:
+            coin = t["symbol"][:-len(quote)]
+            if coin not in VOLUME_BLACKLIST:
+                coins.append(coin)
+        print(f"[VolumePairs] Top {len(coins)} coins por volumen USDC: {', '.join(coins[:10])}...")
+        return coins
+    except Exception as e:
+        print(f"[VolumePairs] Error consultando Binance: {e}")
+        return []
+
 
 RSS_FEEDS = [
     "https://cointelegraph.com/rss",
@@ -186,11 +226,11 @@ Reglas:
 4. Si la noticia es irrelevante o incierta → theme: "unrelated", confidence < 0.3
 5. Sé conservador: mejor pocos coins afectados que muchos con baja confianza"""
 
-BATCH_PROMPT = """\
+BATCH_PROMPT_TEMPLATE = """\
 Eres un analista de trading crypto experto. Analiza TODOS estos titulares de noticias de hoy \
 y genera una señal de sentimiento consolidada por coin para las próximas 24h.
 
-Nuestras monedas: BTC, SOL, LINK, PEPE, SHIB, BONK, WIF, TURBO
+Nuestras monedas: {coins}
 
 REGLAS DE MAPEO:
 - Trump/gobierno EEUU sobre Bitcoin → BTC (muy alto impacto)
@@ -334,21 +374,22 @@ def fetch_recent_news(hours_back: int = 24) -> list[dict]:
     return articles
 
 
-def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
+def analyze_batch_with_claude(articles: list, coins: list) -> tuple:
     """
     Analiza TODOS los artículos en UNA SOLA llamada a la API.
     Coste: ~$0.001/ejecución vs ~$0.05/ejecución del método por-artículo.
     Retorna (coin_signals, usage_info).
+    coins: lista dinámica (FIXED_COINS + VolumePairList)
     """
     try:
         import anthropic
     except ImportError:
         print("[AI] 'anthropic' no instalado. Usando fallback keywords.")
-        return _fallback_batch_analysis(articles), {}
+        return _fallback_batch_analysis(articles, coins), {}
 
     if not ANTHROPIC_KEY:
         print("[AI] Sin ANTHROPIC_API_KEY. Usando fallback keywords.")
-        return _fallback_batch_analysis(articles), {}
+        return _fallback_batch_analysis(articles, coins), {}
 
     # Construir texto con todos los titulares
     news_lines = []
@@ -360,6 +401,8 @@ def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
         news_lines.append(line)
     news_text = "\n".join(news_lines)
 
+    prompt = BATCH_PROMPT_TEMPLATE.format(coins=", ".join(coins))
+
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         msg = client.messages.create(
@@ -367,14 +410,13 @@ def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
             max_tokens=1024,
             messages=[{
                 "role": "user",
-                "content": BATCH_PROMPT + f"\n\nNOTICIAS ({len(articles)} artículos):\n{news_text}"
+                "content": prompt + f"\n\nNOTICIAS ({len(articles)} artículos):\n{news_text}"
             }]
         )
         text = msg.content[0].text.strip()
         usage = {
             "input_tokens":  msg.usage.input_tokens,
             "output_tokens": msg.usage.output_tokens,
-            # haiku: $1/1M input + $5/1M output
             "estimated_cost_usd": round(
                 msg.usage.input_tokens  * 1e-6 * 1.0 +
                 msg.usage.output_tokens * 1e-6 * 5.0,
@@ -383,7 +425,7 @@ def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
         }
     except Exception as e:
         print(f"[AI] Error Claude API: {e}")
-        return _fallback_batch_analysis(articles), {}
+        return _fallback_batch_analysis(articles, coins), {}
 
     # Extraer JSON (puede venir con markdown)
     if "```json" in text:
@@ -395,23 +437,25 @@ def analyze_batch_with_claude(articles: list[dict]) -> tuple[list[dict], dict]:
         result = json.loads(text)
     except json.JSONDecodeError as e:
         print(f"[AI] Error parseando JSON: {e}\nRaw: {text[:300]}")
-        return _fallback_batch_analysis(articles), usage
+        return _fallback_batch_analysis(articles, coins), usage
 
+    coins_set = set(coins)
     signals_raw = result.get("coin_signals", [])
     clean = []
     for sig in signals_raw:
         coin  = str(sig.get("coin", "")).upper().strip()
         score = float(sig.get("ai_score", 0))
         reason = str(sig.get("reason", ""))
-        if coin in OUR_COINS and abs(score) >= 0.15:
+        if coin in coins_set and abs(score) >= 0.15:
             clean.append({"coin": coin, "ai_score": round(score, 3), "reason": reason})
 
     return clean, usage
 
 
-def _fallback_batch_analysis(articles: list[dict]) -> list[dict]:
+def _fallback_batch_analysis(articles: list, coins: list) -> list:
     """Fallback sin API key — análisis por keywords sobre todos los artículos."""
     from collections import defaultdict
+    coins_set = set(coins)
     coin_hits = defaultdict(list)
 
     for a in articles:
@@ -421,7 +465,7 @@ def _fallback_batch_analysis(articles: list[dict]) -> list[dict]:
             -analysis.get("intensity", 0.3) if sentiment == "bearish" else 0
         )
         for coin in analysis.get("affected_coins", []):
-            if coin in OUR_COINS:
+            if coin in coins_set:
                 coin_hits[coin].append(score)
 
     signals = []
@@ -563,6 +607,22 @@ def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int 
     print(f"  Noticias: {news_src} | Análisis: {api_status}")
     print(f"{'='*60}\n")
 
+    # 0. Obtener coins del VolumePairList dinámico (mismo universo que el bot en vivo)
+    volume_coins = fetch_volume_pairs(top_n=40)
+    # Merge: fixed siempre incluidas, volume coins añadidas sin duplicar
+    all_coins = FIXED_COINS[:]
+    for c in volume_coins:
+        if c not in all_coins:
+            all_coins.append(c)
+    print(f"[Coins] Analizando {len(all_coins)} coins: {len(FIXED_COINS)} fijas + {len(all_coins)-len(FIXED_COINS)} de VolumePairList")
+
+    # Si hay Tavily, añadir query específica para coins dinámicas nuevas
+    dynamic_new = [c for c in volume_coins if c not in FIXED_COINS]
+    if dynamic_new and TAVILY_KEY:
+        # Query con los top 6 coins dinámicos más relevantes
+        top_dynamic = " ".join(dynamic_new[:6])
+        TAVILY_QUERIES.append(f"{top_dynamic} crypto news today")
+
     # 1. Fetch news
     articles = fetch_recent_news(hours_back)
     batch = articles[:max_articles]
@@ -572,8 +632,8 @@ def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int 
         coin_signals, usage = [], {}
     else:
         # 2. Analizar TODO en UNA sola llamada (50x más barato que por-artículo)
-        print(f"[AI] Analizando {len(batch)} artículos en 1 llamada batch...")
-        coin_signals, usage = analyze_batch_with_claude(batch)
+        print(f"[AI] Analizando {len(batch)} artículos para {len(all_coins)} coins...")
+        coin_signals, usage = analyze_batch_with_claude(batch, all_coins)
 
         if usage:
             print(f"[AI] Tokens usados: {usage['input_tokens']} input + {usage['output_tokens']} output")
@@ -623,9 +683,9 @@ def run_analysis(hours_back: int = 24, dry_run: bool = False, max_articles: int 
          "ai_net": s["ai_score"], "ai_articles": 1}
         for s in coin_signals
     ]
-    # Añadir coins sin señal con score 0
+    # Añadir coins fijas sin señal con score 0 (solo las 8 fijas para no inflar el CSV)
     coins_with_signal = {s["coin"] for s in coin_signals}
-    for coin in OUR_COINS:
+    for coin in FIXED_COINS:
         if coin not in coins_with_signal:
             csv_rows.append({"date": today, "coin": coin, "ai_score": 0.0, "ai_net": 0.0, "ai_articles": 0})
 
