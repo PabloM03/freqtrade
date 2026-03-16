@@ -148,7 +148,10 @@ class MyStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = True
-    trailing_stop = False
+    trailing_stop = True
+    trailing_stop_positive = 0.012          # trail 1.2% desde el pico
+    trailing_stop_positive_offset = 0.025   # se activa cuando profit >= 2.5%
+    trailing_only_offset_is_reached = True  # solo trailing después del offset
     use_custom_stoploss = False
     minimal_roi = {"0": 10.0}
     MIN_HOLD_BARS = 3
