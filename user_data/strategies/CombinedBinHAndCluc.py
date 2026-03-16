@@ -512,13 +512,14 @@ class MyStrategy(IStrategy):
         )
 
         # Filtro de tendencia triple (usa EMAs de alta temporalidad para consistencia con 1h):
-        # ema50_ht (EMA200@15m = 50h) no bajando >1.5% en 48h (192×15m) — equivale a EMA50@1h shift(48)
-        # ema20_ht (EMA80@15m = 20h) no bajando >1% en 24h (96×15m)    — equivale a EMA20@1h shift(24)
-        # Precio no más de 2.2% por debajo de EMA200@15m
+        # ema50_ht (EMA200@15m = 50h) no bajando >1.4% en 48h (192×15m)
+        # ema20_ht (EMA80@15m = 20h) no bajando >5.2% en 24h (96×15m)
+        # Precio no más del 1.1% por debajo de EMA200@15m
         ema50_ok = (
             (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * self.buy_ema50_slope_48h.value) &
             (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value) &
-            (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value)
+            (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value) &
+            (dataframe['close']    >= dataframe['close'].shift(192)    * 0.80)  # no caída >20% en 48h (bloquea CETUS-type)
         )
 
         # H) Panic Entry — Fear & Greed en Extreme Fear (contrarian máximo)
@@ -789,10 +790,14 @@ class MyStrategy(IStrategy):
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * self.REJECT_UPPER_ATR_MULT) and (upper_wick > self.REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= self.SELL_RSI_WICK):
                 return "upper_wick_reject_exit"
 
-            # Pérdida de momentum tras varias velas en verde
-            if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 6:
-                if (last['rsi'] < last['rsi_prev']) and macd_fade and ema_break:
-                    return "momentum_fade_exit"
+            # Pérdida de momentum — dos niveles:
+            # 1) Ganancias moderadas (<7%): no requiere EMA8 break si RSI ya claramente bajista (<42)
+            #    Captura trades tipo ALGO que van a 3-5% y no alcanzan el BB upper ni RSI 74
+            # 2) Ganancias mayores: comportamiento original (EMA8 break obligatorio)
+            if current_profit >= (self.MIN_PROFIT_NET + 0.002) and bars >= 4:
+                if (last['rsi'] < last['rsi_prev']) and macd_fade:
+                    if ema_break or (current_profit < 0.07 and last['rsi'] < 42):
+                        return "momentum_fade_exit"
 
         except Exception:
             pass
