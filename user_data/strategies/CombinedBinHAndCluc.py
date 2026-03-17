@@ -553,12 +553,20 @@ class MyStrategy(IStrategy):
             (~dataframe['cooldown'].astype(bool))                  # no en cooldown
         )
 
+        # Estabilización de precio: el mínimo de las últimas 4 velas (1h) NO es inferior
+        # al mínimo de las 4 velas anteriores → la caída ha parado, precio consolidando
+        # Previene entrar en caídas verticales tipo CETUS pump-then-dump
+        # El usuario lo describe bien: "esperar al menos un camino horizontal tendiendo a subir"
+        price_stabilized = (
+            dataframe['low'].rolling(4).min() >= dataframe['low'].rolling(4).min().shift(4)
+        )
+
         # D necesita filtro propio (capitulación = caída fuerte, conflicto con PCT1_MIN)
         anti_cuchillo_D = (
             (~dataframe['cooldown'].astype(bool)) &
             (dataframe['volume'] > 0)
         )
-        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok
+        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok & price_stabilized
 
         # base_filter con tendencia para A, B, C, E, F, G
         base_filter_trend = base_filter & ema50_ok
@@ -574,8 +582,8 @@ class MyStrategy(IStrategy):
         # H: Panic Entry — solo en Extreme Fear (F&G < buy_fg_fear), no se solapa con A-G
         mask_H = H & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
         # I: RSI crash ultra-extremo — usa base_filter_D (sin anti_chase, como capitulación D)
-        # Pero SÍ requiere ema50_ok (estructura macro sana)
-        base_filter_I = anti_cuchillo_D & ema50_ok
+        # Pero SÍ requiere ema50_ok (estructura macro sana) y price_stabilized (no caída libre)
+        base_filter_I = anti_cuchillo_D & ema50_ok & price_stabilized
         mask_I = I_rsi_crash & base_filter_I & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H
 
         # J) AI News Entry — solo disponible en live trading cuando ops/analyze_news.py corre
