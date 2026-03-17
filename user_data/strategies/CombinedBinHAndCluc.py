@@ -148,10 +148,7 @@ class MyStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = True
-    trailing_stop = True
-    trailing_stop_positive = 0.012          # trail 1.2% desde el pico
-    trailing_stop_positive_offset = 0.025   # se activa cuando profit >= 2.5%
-    trailing_only_offset_is_reached = True  # solo trailing después del offset
+    trailing_stop = False
     use_custom_stoploss = False
     minimal_roi = {"0": 10.0}
     MIN_HOLD_BARS = 3
@@ -801,6 +798,13 @@ class MyStrategy(IStrategy):
                 if (last['rsi'] < last['rsi_prev']) and macd_fade:
                     if ema_break or (current_profit < 0.07 and last['rsi'] < 42):
                         return "momentum_fade_exit"
+
+            # Exit por tiempo + momentum agotado: lleva >32h en ganancia moderada sin seguir subiendo
+            # Captura ALGO-type: +4% después de 2 días que no sube más pero tampoco cae a RSI<42
+            # No afecta BONK/memes: si siguen subiendo fuerte, MACD no está fading 2 barras seguidas
+            macd_fade_2bars = macd_fade and (prev['macdhist'] < df.iloc[-3]['macdhist'])
+            if bars >= 128 and 0.03 <= current_profit <= 0.15 and macd_fade_2bars and last['rsi'] < last['rsi_prev'] and last['rsi'] < 58:
+                return "long_hold_fade_exit"
 
         except Exception:
             pass
