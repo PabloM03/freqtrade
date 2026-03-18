@@ -644,6 +644,26 @@ class MyStrategy(IStrategy):
         )
         mask_K = K_breakout & base_filter_K & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
 
+        # L) Trend Follow — compra durante una subida vertical confirmada en una pequeña pausa
+        # Concepto: la subida ya está en curso (ROC5 fuerte + EMA8 > EMA20 + ADX alto),
+        # y el precio hace una micro-pausa (1 vela sin subir más). Entrar para seguir el rally.
+        # El trailing stop (1.2% desde el pico) gestiona completamente la salida.
+        # Diferencia con K: K entra en el primer candle del breakout; L entra en pausas DENTRO del rally.
+        L_trend_follow = (
+            (dataframe['roc5'] >= ROC5_VERTICAL) &                           # subida vertical activa (1.5%+ en 5h)
+            (dataframe['ema8'] > dataframe['ema_fast']) &                    # EMA8 > EMA20 (uptrend claro)
+            (dataframe['ema8_slope_up']) &                                   # EMA8 todavía subiendo
+            (dataframe['adx'] > 22) &                                        # tendencia confirmada
+            (dataframe['plus_di'] > dataframe['minus_di']) &                 # dirección alcista
+            (dataframe['rsi'] >= 45) & (dataframe['rsi'] < 72) &            # no sobrecomprado
+            (dataframe['rsi'] > dataframe['rsi_prev']) &                     # RSI recuperando
+            (dataframe['close'] <= dataframe['close'].shift(1) * 1.003) &   # micro-pausa: no acelerando ahora mismo
+            (dataframe['macdhist'] > 0)                                      # momentum positivo
+        )
+        # base_filter_L: igual que K — sin near_hh ni EMA20, estructura macro sana
+        base_filter_L = base_filter_K
+        mask_L = L_trend_follow & base_filter_L & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J & ~mask_K
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -676,6 +696,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_K, 'enter_long'] = 1
         dataframe.loc[mask_K, 'enter_tag'] = 'K_breakout'
+
+        dataframe.loc[mask_L, 'enter_long'] = 1
+        dataframe.loc[mask_L, 'enter_tag'] = 'L_trend_follow'
 
         return dataframe
 
