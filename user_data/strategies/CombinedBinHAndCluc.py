@@ -620,6 +620,30 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
+        # K) Breakout de resistencia con volumen excepcional — entra al inicio de subida vertical
+        # Concepto: cuando el precio rompe el máximo reciente con volumen 3×+ la media, es el
+        # comienzo de una subida fuerte. Entrar aquí para aprovechar el rally completo.
+        # El trailing stop (1.2% desde pico) gestiona la salida cuando el rally termine.
+        # Requiere ema50_ok para no entrar en breakouts de rally bajista global.
+        K_breakout = (
+            (dataframe['close'] > dataframe['hh_20'].shift(1)) &            # rompe el máximo de 20 velas
+            (dataframe['volume'] > dataframe['vol_mean_fast'] * 3.5) &      # volumen excepcional (3.5×)
+            (dataframe['rsi'] >= 45) & (dataframe['rsi'] < 72) &            # momentum positivo, no sobrecomprado
+            (dataframe['rsi'] > dataframe['rsi_prev']) &                     # RSI subiendo
+            (dataframe['macdhist'] > 0) &                                    # MACD positivo
+            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &      # MACD mejorando
+            (dataframe['ema8_slope_up'])                                     # EMA8 ascendente
+        )
+        # base_filter_K: sin near_hh (el breakout ES el nuevo máximo), sin EMA20 (breakout puede ir arriba)
+        base_filter_K = (
+            anti_cuchillo_D &                                   # no cooldown, volume > 0
+            ~no_buy_high &                                      # RSI no extremadamente alto
+            ema50_ok &                                          # estructura macro sana
+            (dataframe['pct_1'] < MAX_PCT_UP_1 * 2) &          # no comprar si ya subió 4% en 1 vela
+            (~(dataframe['pump_vol'] & (dataframe['pct_3'] > 8.0)))  # no si pump brutal >8% en 45min
+        )
+        mask_K = K_breakout & base_filter_K & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -650,10 +674,25 @@ class MyStrategy(IStrategy):
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
 
+        dataframe.loc[mask_K, 'enter_long'] = 1
+        dataframe.loc[mask_K, 'enter_tag'] = 'K_breakout'
+
         return dataframe
 
     # ---------------------- SALIDAS (señal de venta como respaldo) ----------------------
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Rally vertical: durante subida fuerte, NO generar señal de venta en el dataframe.
+        # El trailing stop (1.2% desde el pico) es el único mecanismo que debe cerrar en rally.
+        # Detectado igual que en custom_exit: ROC5 alto O RSI>60 subiendo con MACD positivo.
+        not_in_rally = ~(
+            (dataframe['roc5'] >= ROC5_VERTICAL) |
+            (
+                (dataframe['rsi'] > 60) &
+                (dataframe['rsi'] > dataframe['rsi_prev']) &
+                (dataframe['macdhist'] >= dataframe['macdhist'].shift(1))
+            )
+        )
+
         # Rechazo fuerte cerca de banda superior (mecha y RSI alto)
         reject_upper = (
             (dataframe['upper_wick'] >= dataframe['atr'] * self.REJECT_UPPER_ATR_MULT) &
@@ -663,26 +702,29 @@ class MyStrategy(IStrategy):
         )
 
         dataframe.loc[
+            not_in_rally &
             (
-                (dataframe['loc_peak']) &
-                (dataframe['close'] >= dataframe['bb_upperband'] * 0.999) &
-                (dataframe['rsi'] >= self.SELL_RSI_PEAK) &
                 (
-                    (dataframe['macdhist'] < dataframe['macdhist'].shift(1)) |
-                    (dataframe['close'] < dataframe['ema8']) |
-                    (dataframe['close'] < dataframe['open'])
+                    (dataframe['loc_peak']) &
+                    (dataframe['close'] >= dataframe['bb_upperband'] * 0.999) &
+                    (dataframe['rsi'] >= self.SELL_RSI_PEAK) &
+                    (
+                        (dataframe['macdhist'] < dataframe['macdhist'].shift(1)) |
+                        (dataframe['close'] < dataframe['ema8']) |
+                        (dataframe['close'] < dataframe['open'])
+                    )
                 )
-            )
-            |
-            (
-                (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
-                (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
-                (dataframe['close'] < dataframe['ema8']) &
-                (dataframe['rsi'] >= self.SELL_RSI_HH_EMA) &
-                (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
-            )
-            |
-            reject_upper,
+                |
+                (
+                    (dataframe['high'].shift(1) >= dataframe['hh_20'].shift(1)) &
+                    (dataframe['close'].shift(1) >= dataframe['ema8'].shift(1)) &
+                    (dataframe['close'] < dataframe['ema8']) &
+                    (dataframe['rsi'] >= self.SELL_RSI_HH_EMA) &
+                    (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
+                )
+                |
+                reject_upper
+            ),
             'exit_long'
         ] = 1
         return dataframe
