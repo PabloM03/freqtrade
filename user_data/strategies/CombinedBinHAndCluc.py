@@ -568,15 +568,34 @@ class MyStrategy(IStrategy):
         )
         base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok & price_stabilized
 
-        # base_filter con tendencia para A, B, C, E, F, G
+        # base_filter con tendencia para A, B, C, F, G
         base_filter_trend = base_filter & ema50_ok
+
+        # base_filter especial para E — permite entradas SOBRE EMA20 en tendencia alcista confirmada.
+        # Problema: en uptrend, EMA8 > EMA20; el precio rebota en EMA8 POR ENCIMA de EMA20.
+        # El anti_chase estándar exige close <= EMA20*0.998, bloqueando estos pullbacks legítimos.
+        # Solución: reemplazar los filtros EMA20/BB_mid/near_hh por confirmación de tendencia alcista.
+        uptrend_confirmed = (
+            dataframe['ema8_slope_up'] &                          # EMA8 ascendente
+            (dataframe['adx'] > 20) &                             # tendencia confirmada (ADX > 20)
+            (dataframe['plus_di'] > dataframe['minus_di'])        # dirección alcista
+        )
+        anti_chase_uptrend = (
+            (dataframe['pct_1'] < MAX_PCT_UP_1) &
+            (dataframe['pct_3'] < MAX_PCT_UP_3) &
+            (dataframe['green_streak'] < MAX_GREEN_STREAK) &
+            (~(dataframe['pump_vol'] & (dataframe['pct_1'] > 0.6))) &
+            (~((dataframe['bb_percent'] >= BB_EXPANDING_HIGH) & dataframe['bb_expanding']))
+            # Sin near_hh, sin EMA20, sin BB_mid — en uptrend el rebote en EMA8 es válido sobre EMA20
+        )
+        base_filter_E = anti_cuchillo & ~no_buy_high & anti_chase_uptrend & uptrend_confirmed & ema50_ok
 
         # Calcular máscaras una sola vez para evitar el bug de re-evaluación
         mask_A = A & base_filter_trend
         mask_B = B & base_filter_trend & ~mask_A
         mask_C = C & base_filter_trend & ~mask_A & ~mask_B
         mask_D = D & base_filter_D & ~mask_A & ~mask_B & ~mask_C
-        mask_E = E & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D
+        mask_E = E & base_filter_E & ~mask_A & ~mask_B & ~mask_C & ~mask_D
         mask_F = F & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
         # H: Panic Entry — solo en Extreme Fear (F&G < buy_fg_fear), no se solapa con A-G
@@ -785,7 +804,18 @@ class MyStrategy(IStrategy):
             macd_fade  = (last['macdhist'] < prev['macdhist'])
             ema_break  = (last['close'] < last['ema8'])
 
+            # Rally activo: si el precio está subiendo fuerte, no interferir con custom_exit.
+            # Dejar que el trailing stop gestione la salida (es su función en subidas verticales).
+            # Se detecta rally por ROC5 alto (1.5%+ en 1h15m) O por momentum alcista claro.
+            in_rally = (
+                (float(last['roc5']) >= ROC5_VERTICAL) or
+                (float(last['rsi']) > 60 and
+                 float(last['rsi']) > float(prev['rsi']) and
+                 not macd_fade)
+            )
+
             # Pico óptimo: banda sup + máximo local + giro claro
+            # (se evalúa incluso en rally — si RSI>74 y hay vela bajista, es pico real)
             if current_profit >= self.sell_peak_min_profit.value and near_upper and loc_peak and rsi_high and (
                 bear_candle or macd_fade or ema_break
             ):
@@ -800,6 +830,11 @@ class MyStrategy(IStrategy):
             body = float(abs(last['close'] - last['open']))
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * self.REJECT_UPPER_ATR_MULT) and (upper_wick > self.REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= self.SELL_RSI_WICK):
                 return "upper_wick_reject_exit"
+
+            # Durante un rally activo, no salir por momentum fade ni por tiempo:
+            # el trailing stop se encargará cuando el precio realmente gire
+            if in_rally:
+                return None
 
             # Pérdida de momentum — dos niveles:
             # 1) Ganancias moderadas (<7%): no requiere EMA8 break si RSI ya claramente bajista (<42)
