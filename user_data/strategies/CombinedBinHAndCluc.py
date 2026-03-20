@@ -28,7 +28,7 @@ HH_EMA_MIN_PROFIT = 0.025                             # salida HH + ruptura EMA8
 HARD_TP = 0.50                                        # TP 50% — deja correr a BONK/WIF/memes en bull runs
 
 # --- Stoploss y trailing (menos margen: candles de 15m tienen menos ruido) ---
-STOPLOSS_ABS = -0.035                                 # SL 3.5% — 15m tiene menos ruido que 1h
+STOPLOSS_ABS = -0.02                                  # SL 2%
 TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
 TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
 TRAIL_DIST_MIN = 0.040
@@ -149,7 +149,7 @@ class MyStrategy(IStrategy):
     exit_profit_only = False
     ignore_roi_if_entry_signal = True
     trailing_stop = True
-    trailing_stop_positive = 0.012          # trail 1.2% desde el pico
+    trailing_stop_positive = 0.010          # trail 1% desde el pico
     trailing_stop_positive_offset = 0.025   # se activa cuando profit >= 2.5%
     trailing_only_offset_is_reached = True
     use_custom_stoploss = False
