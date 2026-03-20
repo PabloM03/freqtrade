@@ -69,18 +69,6 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
-      - name: Crear ops/.env con API keys
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "printf 'TAVILY_API_KEY=%s\nANTHROPIC_API_KEY=%s\n' '${TAVILY_API_KEY}' '${ANTHROPIC_API_KEY}' > ${TARGET_DIR}/ops/.env"
-
       - name: Reiniciar servicio
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
