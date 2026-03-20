@@ -622,6 +622,28 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
+        # K) Volumen anómalo — detección temprana de pump antes de que el precio explote
+        # El volumen precede al precio: cuando el volumen 1h es 5× la media histórica,
+        # algo se está gestando. Con stoploss -2% las falsas señales cuestan poco.
+        # Diferencia clave vs K anterior: detecta ANTES del breakout (volumen, no precio)
+        vol_1h = dataframe['volume'].rolling(4).sum()           # volumen última hora (4×15m)
+        vol_mean_1h = dataframe['volume'].rolling(96).mean() * 4  # media de 1h en 24h de historia
+        K_volume_pump = (
+            (vol_1h >= vol_mean_1h * 5.0) &                        # volumen 1h > 5× media → anomalía
+            (dataframe['rsi'] >= 40) & (dataframe['rsi'] < 65) &   # momentum positivo, no sobrecomprado
+            (dataframe['rsi'] > dataframe['rsi_prev']) &            # RSI subiendo
+            (dataframe['roc5'] > 0.5) &                             # precio moviéndose (0.5% en 5h)
+            (dataframe['macdhist'] > 0) &                           # MACD positivo
+            (dataframe['close'] > dataframe['ema8'])                # precio sobre media rápida
+        )
+        base_filter_K = (
+            anti_cuchillo_D &                                       # no cooldown, volumen > 0
+            ~no_buy_high &                                          # RSI no extremo
+            ema50_ok &                                              # estructura macro sana
+            (~(dataframe['pump_vol'] & (dataframe['pct_3'] > 8.0)))  # no si ya subió 8% en 45min
+        )
+        mask_K = K_volume_pump & base_filter_K & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -651,6 +673,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
+
+        dataframe.loc[mask_K, 'enter_long'] = 1
+        dataframe.loc[mask_K, 'enter_tag'] = 'K_volume_pump'
 
         return dataframe
 
