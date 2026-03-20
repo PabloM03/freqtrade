@@ -3,6 +3,8 @@ import json
 import numpy as np
 import os
 import pandas as pd
+import time
+from pathlib import Path
 # --------------------------------
 import talib.abstract as ta
 from freqtrade.strategy.interface import IStrategy
@@ -833,17 +835,21 @@ class MyStrategy(IStrategy):
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * self.REJECT_UPPER_ATR_MULT) and (upper_wick > self.REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= self.SELL_RSI_WICK):
                 return "upper_wick_reject_exit"
 
+            # Señal de Claude como inclinación suave (peso menor que noticias — son interpretación)
+            # Solo se consulta si hay beneficio real para no gastar API en trades perdedores
+            claude_signal = self._get_claude_chart_signal(pair, current_profit, df) if current_profit >= 0.01 else 0
+
             # Salida rápida si en 12h el trade no ha progresado:
-            # si lleva 48+ velas (12h) con ganancia pequeña (0.3-4%) y no está subiendo,
-            # liberar capital antes de que venga la bajada posterior
-            if bars >= 48 and self.MIN_PROFIT_NET <= current_profit <= 0.04:
+            # Claude EXIT adelanta el umbral a 6h; sin señal espera 12h completas
+            stagnant_bars = 24 if claude_signal <= -1 else 48
+            if bars >= stagnant_bars and self.MIN_PROFIT_NET <= current_profit <= 0.04:
                 not_rising = not (float(last['rsi']) > 55 and float(last['rsi']) > float(prev['rsi']) and not macd_fade)
                 if not_rising:
                     return "stagnant_exit"
 
-            # Durante un rally activo, no salir por momentum fade ni por tiempo:
+            # Durante un rally activo o si Claude dice HOLD, no salir por momentum fade:
             # el trailing stop se encargará cuando el precio realmente gire
-            if in_rally:
+            if in_rally or claude_signal >= 1:
                 return None
 
             # Pérdida de momentum — dos niveles:
@@ -866,6 +872,57 @@ class MyStrategy(IStrategy):
             pass
 
         return None
+
+    # ---------------------- CLAUDE CHART SIGNAL ----------------------
+    def _get_claude_chart_signal(self, pair: str, current_profit: float, df) -> int:
+        """
+        Consulta a Claude sobre el estado del trade basándose en indicadores actuales.
+        Retorna: 1 (mantener/HOLD), 0 (neutral), -1 (salir/EXIT)
+        Cacheado 1h por par para no saturar la API.
+        Es una INCLINACIÓN, no una decisión definitiva — peso menor que las noticias.
+        """
+        if not hasattr(self, '_claude_chart_cache'):
+            self._claude_chart_cache: dict = {}
+        now = time.time()
+        cached = self._claude_chart_cache.get(pair)
+        if cached and (now - cached[0]) < 3600:
+            return cached[1]
+        try:
+            env_file = Path(__file__).parent.parent.parent / 'ops' / '.env'
+            api_key = ''
+            if env_file.exists():
+                for line in env_file.read_text().splitlines():
+                    if line.startswith('ANTHROPIC_API_KEY='):
+                        api_key = line.split('=', 1)[1].strip()
+            if not api_key:
+                return 0
+            import anthropic
+            last = df.iloc[-1]
+            prev = df.iloc[-2]
+            macd_dir = "subiendo" if float(last['macdhist']) > float(prev['macdhist']) else "bajando"
+            roc5 = float(last.get('roc5', 0))
+            vol_ratio = float(last['volume']) / max(float(last['vol_mean_fast']), 1)
+            prompt = (
+                f"Trade crypto abierto. Indica si mantener o salir.\n"
+                f"Par: {pair} | Beneficio: {current_profit*100:.1f}%\n"
+                f"RSI: {float(last['rsi']):.0f} (anterior {float(prev['rsi']):.0f})\n"
+                f"MACD histograma: {macd_dir}\n"
+                f"Posición BB: {float(last['bb_percent'])*100:.0f}% (0=fondo, 100=techo)\n"
+                f"ROC 5h: {roc5:.1f}% | Volumen vs media: {vol_ratio:.1f}x\n"
+                f"Responde solo: HOLD, EXIT o NEUTRAL"
+            )
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=10,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            word = response.content[0].text.strip().upper()
+            signal = 1 if 'HOLD' in word else (-1 if 'EXIT' in word else 0)
+            self._claude_chart_cache[pair] = (now, signal)
+            return signal
+        except Exception:
+            return 0
 
     # ---------------------- TRAILING ----------------------
     def custom_stoploss(
