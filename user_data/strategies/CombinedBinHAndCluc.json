@@ -6,7 +6,7 @@
     },
     "trailing": {
       "trailing_stop": true,
-      "trailing_stop_positive": 0.012,
+      "trailing_stop_positive": 0.01,
       "trailing_stop_positive_offset": 0.025,
       "trailing_only_offset_is_reached": true
     },
@@ -32,7 +32,7 @@
     },
     "protection": {},
     "stoploss": {
-      "stoploss": -0.05
+      "stoploss": -0.02
     }
   },
   "ft_stratparam_v": 1,
