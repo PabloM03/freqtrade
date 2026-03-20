@@ -620,50 +620,6 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
-        # K) Breakout de resistencia con volumen excepcional — entra al inicio de subida vertical
-        # Concepto: cuando el precio rompe el máximo reciente con volumen 3×+ la media, es el
-        # comienzo de una subida fuerte. Entrar aquí para aprovechar el rally completo.
-        # El trailing stop (1.2% desde pico) gestiona la salida cuando el rally termine.
-        # Requiere ema50_ok para no entrar en breakouts de rally bajista global.
-        K_breakout = (
-            (dataframe['close'] > dataframe['hh_20'].shift(1)) &            # rompe el máximo de 20 velas
-            (dataframe['volume'] > dataframe['vol_mean_fast'] * 3.5) &      # volumen excepcional (3.5×)
-            (dataframe['rsi'] >= 45) & (dataframe['rsi'] < 72) &            # momentum positivo, no sobrecomprado
-            (dataframe['rsi'] > dataframe['rsi_prev']) &                     # RSI subiendo
-            (dataframe['macdhist'] > 0) &                                    # MACD positivo
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &      # MACD mejorando
-            (dataframe['ema8_slope_up'])                                     # EMA8 ascendente
-        )
-        # base_filter_K: sin near_hh (el breakout ES el nuevo máximo), sin EMA20 (breakout puede ir arriba)
-        base_filter_K = (
-            anti_cuchillo_D &                                   # no cooldown, volume > 0
-            ~no_buy_high &                                      # RSI no extremadamente alto
-            ema50_ok &                                          # estructura macro sana
-            (dataframe['pct_1'] < MAX_PCT_UP_1 * 2) &          # no comprar si ya subió 4% en 1 vela
-            (~(dataframe['pump_vol'] & (dataframe['pct_3'] > 8.0)))  # no si pump brutal >8% en 45min
-        )
-        mask_K = K_breakout & base_filter_K & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
-
-        # L) Trend Follow — compra durante una subida vertical confirmada en una pequeña pausa
-        # Concepto: la subida ya está en curso (ROC5 fuerte + EMA8 > EMA20 + ADX alto),
-        # y el precio hace una micro-pausa (1 vela sin subir más). Entrar para seguir el rally.
-        # El trailing stop (1.2% desde el pico) gestiona completamente la salida.
-        # Diferencia con K: K entra en el primer candle del breakout; L entra en pausas DENTRO del rally.
-        L_trend_follow = (
-            (dataframe['roc5'] >= ROC5_VERTICAL) &                           # subida vertical activa (1.5%+ en 5h)
-            (dataframe['ema8'] > dataframe['ema_fast']) &                    # EMA8 > EMA20 (uptrend claro)
-            (dataframe['ema8_slope_up']) &                                   # EMA8 todavía subiendo
-            (dataframe['adx'] > 22) &                                        # tendencia confirmada
-            (dataframe['plus_di'] > dataframe['minus_di']) &                 # dirección alcista
-            (dataframe['rsi'] >= 45) & (dataframe['rsi'] < 72) &            # no sobrecomprado
-            (dataframe['rsi'] > dataframe['rsi_prev']) &                     # RSI recuperando
-            (dataframe['close'] <= dataframe['close'].shift(1) * 1.003) &   # micro-pausa: no acelerando ahora mismo
-            (dataframe['macdhist'] > 0)                                      # momentum positivo
-        )
-        # base_filter_L: igual que K — sin near_hh ni EMA20, estructura macro sana
-        base_filter_L = base_filter_K
-        mask_L = L_trend_follow & base_filter_L & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J & ~mask_K
-
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -694,28 +650,10 @@ class MyStrategy(IStrategy):
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
 
-        dataframe.loc[mask_K, 'enter_long'] = 1
-        dataframe.loc[mask_K, 'enter_tag'] = 'K_breakout'
-
-        dataframe.loc[mask_L, 'enter_long'] = 1
-        dataframe.loc[mask_L, 'enter_tag'] = 'L_trend_follow'
-
         return dataframe
 
     # ---------------------- SALIDAS (señal de venta como respaldo) ----------------------
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Rally vertical: durante subida fuerte, NO generar señal de venta en el dataframe.
-        # El trailing stop (1.2% desde el pico) es el único mecanismo que debe cerrar en rally.
-        # Detectado igual que en custom_exit: ROC5 alto O RSI>60 subiendo con MACD positivo.
-        not_in_rally = ~(
-            (dataframe['roc5'] >= ROC5_VERTICAL) |
-            (
-                (dataframe['rsi'] > 60) &
-                (dataframe['rsi'] > dataframe['rsi_prev']) &
-                (dataframe['macdhist'] >= dataframe['macdhist'].shift(1))
-            )
-        )
-
         # Rechazo fuerte cerca de banda superior (mecha y RSI alto)
         reject_upper = (
             (dataframe['upper_wick'] >= dataframe['atr'] * self.REJECT_UPPER_ATR_MULT) &
@@ -725,7 +663,6 @@ class MyStrategy(IStrategy):
         )
 
         dataframe.loc[
-            not_in_rally &
             (
                 (
                     (dataframe['loc_peak']) &
@@ -895,6 +832,14 @@ class MyStrategy(IStrategy):
             body = float(abs(last['close'] - last['open']))
             if current_profit >= self.MIN_PROFIT_NET and near_upper and (upper_wick >= last['atr'] * self.REJECT_UPPER_ATR_MULT) and (upper_wick > self.REJECT_WICK_BODY_RATIO * body) and (last['rsi'] >= self.SELL_RSI_WICK):
                 return "upper_wick_reject_exit"
+
+            # Salida rápida si en 12h el trade no ha progresado:
+            # si lleva 48+ velas (12h) con ganancia pequeña (0.3-4%) y no está subiendo,
+            # liberar capital antes de que venga la bajada posterior
+            if bars >= 48 and self.MIN_PROFIT_NET <= current_profit <= 0.04:
+                not_rising = not (float(last['rsi']) > 55 and float(last['rsi']) > float(prev['rsi']) and not macd_fade)
+                if not_rising:
+                    return "stagnant_exit"
 
             # Durante un rally activo, no salir por momentum fade ni por tiempo:
             # el trailing stop se encargará cuando el precio realmente gire

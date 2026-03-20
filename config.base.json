@@ -50,7 +50,7 @@
       ],
       "pair_blacklist": [
         "XRP/.*", "AVAX/.*", "LTC/.*", "BNB/.*", "WBTC/.*", "WETH/.*",
-        "DOGE/.*", "ETH/.*", "ADA/.*", "FLOKI/.*",
+        "DOGE/.*", "ETH/.*", "ADA/.*", "FLOKI/.*", "EUR/.*",
         ".*(UP|DOWN|BEAR|BULL).*",
         ".*3L.*", ".*3S.*", ".*5L.*", ".*5S.*", ".*10L.*", ".*10S.*",
         ".*LONG.*", ".*SHORT.*",
