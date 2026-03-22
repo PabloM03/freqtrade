@@ -622,27 +622,6 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
-        # K) Volumen anómalo — detección temprana de pump antes de que el precio explote
-        # El volumen precede al precio: cuando el volumen 1h es 5× la media histórica,
-        # algo se está gestando. Con stoploss -2% las falsas señales cuestan poco.
-        vol_1h = dataframe['volume'].rolling(4).sum()
-        vol_mean_1h = dataframe['volume'].rolling(96).mean() * 4
-        K_volume_pump = (
-            (vol_1h >= vol_mean_1h * 5.0) &
-            (dataframe['rsi'] >= 40) & (dataframe['rsi'] < 65) &
-            (dataframe['rsi'] > dataframe['rsi_prev']) &
-            (dataframe['roc5'] > 0.5) &
-            (dataframe['macdhist'] > 0) &
-            (dataframe['close'] > dataframe['ema8'])
-        )
-        base_filter_K = (
-            anti_cuchillo_D &
-            ~no_buy_high &
-            ema50_ok &
-            (~(dataframe['pump_vol'] & (dataframe['pct_3'] > 8.0)))
-        )
-        mask_K = K_volume_pump & base_filter_K & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
-
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -672,9 +651,6 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
-
-        dataframe.loc[mask_K, 'enter_long'] = 1
-        dataframe.loc[mask_K, 'enter_tag'] = 'K_volume_pump'
 
         return dataframe
 
