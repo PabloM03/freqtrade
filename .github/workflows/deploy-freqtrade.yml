@@ -19,9 +19,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Instalar rsync y ssh
-        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
-
       - name: Preparar claves SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
