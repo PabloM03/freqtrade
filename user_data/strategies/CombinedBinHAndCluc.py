@@ -30,7 +30,7 @@ HH_EMA_MIN_PROFIT = 0.025                             # salida HH + ruptura EMA8
 HARD_TP = 0.50                                        # TP 50% — deja correr a BONK/WIF/memes en bull runs
 
 # --- Stoploss y trailing (menos margen: candles de 15m tienen menos ruido) ---
-STOPLOSS_ABS = -0.347                                 # SL wide — deja recuperar dips (JSON lo sobreescribe igual)
+STOPLOSS_ABS = -0.02                                  # SL -2% + trailing 1% desde pico (JSON lo sobreescribe igual)
 TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
 TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
 TRAIL_DIST_MIN = 0.040
@@ -278,6 +278,10 @@ class MyStrategy(IStrategy):
         # ADX/DI — escalado ×m: mide fuerza de tendencia sobre ventana temporal equivalente (14h)
         dataframe['rsi']      = ta.RSI(dataframe, timeperiod=14)
         dataframe['rsi_prev'] = dataframe['rsi'].shift(1)
+        dataframe['rsi_rising_2bars'] = (
+            (dataframe['rsi'] > dataframe['rsi_prev']) &
+            (dataframe['rsi_prev'] > dataframe['rsi'].shift(2))
+        )
         dataframe['adx']      = ta.ADX(dataframe, timeperiod=14 * m)
         dataframe['plus_di']  = ta.PLUS_DI(dataframe, timeperiod=14 * m)
         dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=14 * m)
@@ -460,12 +464,15 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + MACD + EMA20 no bajando
+        # C) StochRSI cruce en sobreventa + RSI confirmando 2 barras + MACD + EMA20 no bajando
+        # rsi_rising_2bars: RSI subiendo 2 velas consecutivas antes de entrar → precio ya recuperando
+        # Reduce false entries con SL -2%: si el precio sigue cayendo tras el cruce, RSI también cae → no dispara
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
             (dataframe['stoch_k'] < self.buy_c_stoch_max.value) &
             (dataframe['stoch_d'] < self.buy_c_stoch_max.value) &
+            dataframe['rsi_rising_2bars'] &                              # confirmación: RSI subiendo 2 barras
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(16)) & # EMA20 plana (16×15m = 4h equivalente)
             (bb_zone_ok)
@@ -535,7 +542,7 @@ class MyStrategy(IStrategy):
             (dataframe['fear_greed'] < self.buy_fg_fear.value) &  # mercado en pánico extremo
             dataframe['loc_trough'] &                              # mínimo local real (no caída libre)
             (dataframe['rsi'] < 42) &                              # moderadamente sobrevendido
-            (dataframe['rsi'] > dataframe['rsi_prev']) &           # RSI girando al alza
+            dataframe['rsi_rising_2bars'] &                        # RSI girando al alza 2 barras consecutivas
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             dataframe['vol_spike'] &                               # volumen confirmando
             (bb_zone_ok)                                           # zona baja BB

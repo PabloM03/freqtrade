@@ -5,10 +5,10 @@
       "0": 10.0
     },
     "trailing": {
-      "trailing_stop": false,
-      "trailing_stop_positive": null,
-      "trailing_stop_positive_offset": 0.0,
-      "trailing_only_offset_is_reached": false
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.01,
+      "trailing_stop_positive_offset": 0.025,
+      "trailing_only_offset_is_reached": true
     },
     "max_open_trades": {
       "max_open_trades": 5
@@ -32,7 +32,7 @@
     },
     "protection": {},
     "stoploss": {
-      "stoploss": -0.347
+      "stoploss": -0.02
     }
   },
   "ft_stratparam_v": 1,
