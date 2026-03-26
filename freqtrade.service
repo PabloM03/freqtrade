@@ -3,11 +3,10 @@ Description=Freqtrade Daemon
 After=network.target
 
 [Service]
-# Set WorkingDirectory and ExecStart to your file paths accordingly
-# NOTE: %h will be resolved to /home/<username>
-WorkingDirectory=%h/freqtrade
-ExecStart=/usr/bin/freqtrade trade
+WorkingDirectory=/home/ubuntu/freqtrade
+ExecStart=/home/ubuntu/miniconda3/bin/conda run -n freqtrade --no-capture-output bash /home/ubuntu/freqtrade/ops/trade.sh
 Restart=on-failure
+RestartSec=10
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

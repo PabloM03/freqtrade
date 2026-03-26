@@ -69,12 +69,13 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
-      - name: Reiniciar servicio
+      - name: Instalar service file y reiniciar
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
+          TARGET_DIR: ${{ secrets.TARGET_DIR }}
           SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
         run: |
           ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            "sudo systemctl daemon-reload || true && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
+            "sudo cp ${TARGET_DIR}/freqtrade.service /etc/systemd/system/${SERVICE_NAME}.service && sudo systemctl daemon-reload && sudo systemctl restart ${SERVICE_NAME} && sudo systemctl status ${SERVICE_NAME} -n 20 --no-pager"
