@@ -70,7 +70,7 @@ D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferio
 D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
 
 # E) Pullback a EMA8 (más exigente)
-E_RSI_MIN = 55                                          # pullback solo con fuerza real
+E_RSI_MIN = 45                                          # pullback: RSI > 45 captura inicio de tendencia antes de confirmación ADX
 E_LL10_MULT = 1.008
 E_BB_MID_MULT = 0.996
 
@@ -464,15 +464,12 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)
         )
 
-        # C) StochRSI cruce en sobreventa + RSI confirmando 2 barras + MACD + EMA20 no bajando
-        # rsi_rising_2bars: RSI subiendo 2 velas consecutivas antes de entrar → precio ya recuperando
-        # Reduce false entries con SL -2%: si el precio sigue cayendo tras el cruce, RSI también cae → no dispara
+        # C) StochRSI cruce en sobreventa + MACD + EMA20 no bajando
         C = (
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &
             (dataframe['stoch_k'] > dataframe['stoch_d']) &
             (dataframe['stoch_k'] < self.buy_c_stoch_max.value) &
             (dataframe['stoch_d'] < self.buy_c_stoch_max.value) &
-            dataframe['rsi_rising_2bars'] &                              # confirmación: RSI subiendo 2 barras
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             (dataframe['ema_fast'] >= dataframe['ema_fast'].shift(16)) & # EMA20 plana (16×15m = 4h equivalente)
             (bb_zone_ok)
@@ -542,7 +539,7 @@ class MyStrategy(IStrategy):
             (dataframe['fear_greed'] < self.buy_fg_fear.value) &  # mercado en pánico extremo
             dataframe['loc_trough'] &                              # mínimo local real (no caída libre)
             (dataframe['rsi'] < 42) &                              # moderadamente sobrevendido
-            dataframe['rsi_rising_2bars'] &                        # RSI girando al alza 2 barras consecutivas
+            (dataframe['rsi'] > dataframe['rsi_prev']) &           # RSI girando al alza
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
             dataframe['vol_spike'] &                               # volumen confirmando
             (bb_zone_ok)                                           # zona baja BB
@@ -586,8 +583,7 @@ class MyStrategy(IStrategy):
         # Solución: reemplazar los filtros EMA20/BB_mid/near_hh por confirmación de tendencia alcista.
         uptrend_confirmed = (
             dataframe['ema8_slope_up'] &                          # EMA8 ascendente
-            (dataframe['adx'] > 20) &                             # tendencia confirmada (ADX > 20)
-            (dataframe['plus_di'] > dataframe['minus_di'])        # dirección alcista
+            (dataframe['plus_di'] > dataframe['minus_di'])        # dirección alcista (sin ADX>20: captura inicio de tendencia)
         )
         anti_chase_uptrend = (
             (dataframe['pct_1'] < MAX_PCT_UP_1) &
