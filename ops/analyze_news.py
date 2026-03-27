@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 ops/analyze_news.py — Análisis temático de noticias crypto con Claude AI
 =========================================================================
