@@ -70,7 +70,7 @@ D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferio
 D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
 
 # E) Pullback a EMA8 (más exigente)
-E_RSI_MIN = 45                                          # pullback: RSI > 45 captura inicio de tendencia antes de confirmación ADX
+E_RSI_MIN = 55                                          # pullback solo con fuerza real (RSI>55 = tendencia establecida)
 E_LL10_MULT = 1.008
 E_BB_MID_MULT = 0.996
 
@@ -583,7 +583,8 @@ class MyStrategy(IStrategy):
         # Solución: reemplazar los filtros EMA20/BB_mid/near_hh por confirmación de tendencia alcista.
         uptrend_confirmed = (
             dataframe['ema8_slope_up'] &                          # EMA8 ascendente
-            (dataframe['plus_di'] > dataframe['minus_di'])        # dirección alcista (sin ADX>20: captura inicio de tendencia)
+            (dataframe['adx'] > 20) &                             # tendencia establecida (no pump flash)
+            (dataframe['plus_di'] > dataframe['minus_di'])        # dirección alcista
         )
         anti_chase_uptrend = (
             (dataframe['pct_1'] < MAX_PCT_UP_1) &
