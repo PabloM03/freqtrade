@@ -240,6 +240,11 @@ class MyStrategy(IStrategy):
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
 
+    # ---------------------- PARES INFORMATIVOS ----------------------
+    def informative_pairs(self):
+        # BTC/USDC como proxy macro — detectar crashes correlacionados
+        return [('BTC/USDC', self.timeframe)]
+
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         m = TF_MULT  # multiplicador de períodos para equivalencia temporal vs 1h
@@ -394,6 +399,27 @@ class MyStrategy(IStrategy):
 
         coin = metadata['pair'].split('/')[0]
         dataframe['ai_score'] = self._ai_scores.get(coin, 0.0)
+
+        # --- BTC Macro Crash Filter ---
+        # Detecta crashes macro genuinos (ej: Liberation Day, FTX, Luna) donde TODOS los altcoins
+        # caen en correlación independientemente de sus señales técnicas propias.
+        # Umbral: BTC cae >8% en 8h Y sigue cayendo >2% en la última 1h (crash activo, no rebotando).
+        # Correcciones normales de bull market (BTC -3/-5% en 4h) NO activan el filtro → entradas OK.
+        # H e I quedan libres (diseñados para pánico extremo).
+        dataframe['btc_macro_crash'] = False
+        if self.dp:
+            btc_df = self.dp.get_pair_dataframe('BTC/USDC', self.timeframe)
+            if btc_df is not None and len(btc_df) > 40:
+                # map() preserva el índice entero del dataframe (reindex daría índice datetime → NaN al asignar)
+                btc_close = btc_df.set_index('date')['close']
+                btc_series = dataframe['date'].map(btc_close).ffill()
+                btc_pct_8h = (btc_series / btc_series.shift(32) - 1)   # cambio en 8h (32×15m)
+                btc_pct_1h = (btc_series / btc_series.shift(4)  - 1)   # cambio en 1h (4×15m)
+                dataframe['btc_macro_crash'] = (
+                    (btc_pct_8h < -0.08) &    # BTC bajó >8% en las últimas 8h (crash real)
+                    (btc_pct_1h < -0.02)      # Y sigue cayendo >2% en 1h (activo, no rebotando)
+                ).fillna(False)
+
 
         return dataframe
 
@@ -576,16 +602,20 @@ class MyStrategy(IStrategy):
         )
         # D: capitulación = caída fuerte. price_stabilized aquí sería contradictorio (la caída ES inestabilidad).
         # El rebote verde dentro de la misma vela ya ES la confirmación de soporte.
-        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok
+        no_macro_crash = ~dataframe['btc_macro_crash'].astype(bool)
+
+        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok & no_macro_crash
 
         # base_filter para entradas trough+recovery (A, B, C, F)
-        # NO incluye anti_chase (close ≤ EMA80*0.998): tras un trough, el rebote de 1%+ puede superar EMA80.
-        # La protección viene de loc_trough.shift(1) + bb_zone + recovery ≥1% en cada condición.
-        # ema50_ok sigue bloqueando bear markets sostenidos a macro nivel.
-        base_filter_trough = anti_cuchillo & ~no_buy_high & ema50_ok
+        # no_macro_crash: bloquea crashes macro correlacionados (BTC -8% en 8h Y -2% en 1h)
+        # H e I quedan libres via base_filter_trough_panic (panic entries, no filtrar)
+        base_filter_trough = anti_cuchillo & ~no_buy_high & ema50_ok & no_macro_crash
 
-        # base_filter con tendencia para condiciones que no usan trough-shift (H, J, etc.)
-        base_filter_trend = base_filter & ema50_ok
+        # base_filter_trough_panic: sin no_macro_crash — para H e I (contrarian panic entries)
+        base_filter_trough_panic = anti_cuchillo & ~no_buy_high & ema50_ok
+
+        # base_filter con tendencia para condiciones que no usan trough-shift (J, etc.)
+        base_filter_trend = base_filter & ema50_ok & no_macro_crash
 
         # base_filter especial para E — permite entradas SOBRE EMA20 en tendencia alcista confirmada.
         # Problema: en uptrend, EMA8 > EMA20; el precio rebota en EMA8 POR ENCIMA de EMA20.
@@ -616,11 +646,9 @@ class MyStrategy(IStrategy):
         mask_E = E & base_filter_E & ~mask_A & ~mask_B & ~mask_C & ~mask_D
         mask_F = F & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
-        # H: Panic Entry — usa base_filter_trough (loc_trough.shift(1) + recovery, sin anti_chase como A/B/C)
-        mask_H = H & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
-        # I: RSI crash ultra-extremo — usa base_filter_D (sin anti_chase, como capitulación D)
-        # Pero SÍ requiere ema50_ok (estructura macro sana) y price_stabilized (no caída libre)
-        # I: RSI ultra-extremo también es incompatible con price_stabilized (precio está en caída)
+        # H: Panic Entry — usa base_filter_trough_panic (sin no_macro_crash: H dispara EN el crash)
+        mask_H = H & base_filter_trough_panic & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
+        # I: RSI crash ultra-extremo — sin no_macro_crash (capitulación extrema, puede ser crash macro)
         base_filter_I = anti_cuchillo_D & ema50_ok
         mask_I = I_rsi_crash & base_filter_I & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H
 
