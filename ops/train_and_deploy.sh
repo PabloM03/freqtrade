@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ---- REENTRENAMIENTO AUTOMÁTICO DESACTIVADO ----
+# Desactivado 2026-04-07: los params del hyperopt automático empeoran la estrategia
+# (OnlyProfitHyperOptLoss sin validación temporal suficiente → overfit).
+# Los params óptimos están fijados en user_data/strategies/CombinedBinHAndCluc.json
+# y se despliegan vía git push → CI/CD → rsync.
+# Para reactivar: eliminar las 3 líneas siguientes.
+echo "[retrain] DESACTIVADO — ver comentario en cabecera del script"
+exit 0
+
 BASE="/home/ubuntu/freqtrade"
 OPS="$BASE/ops"
 STRAT="CombinedBinHAndCluc"
