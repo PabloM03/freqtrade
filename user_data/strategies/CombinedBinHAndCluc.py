@@ -339,6 +339,14 @@ class MyStrategy(IStrategy):
             (dataframe['low'] <= dataframe['low'].shift(1)) &
             (dataframe['low'] <= dataframe['low'].shift(2))
         )
+        # loc_trough_4h: versión menos selectiva (4h = 16 barras vs 6h = 24).
+        # Usada por B y C como señal secundaria cuando el trough 6h no se activó.
+        # Más frecuente pero con los mismos filtros de calidad (recovery, vol, MACD).
+        dataframe['loc_trough_4h'] = (
+            (dataframe['low'] <= dataframe['low'].rolling(4 * m).min()) &
+            (dataframe['low'] <= dataframe['low'].shift(1)) &
+            (dataframe['low'] <= dataframe['low'].shift(2))
+        )
 
         # Anti-chase helpers
         dataframe['green'] = dataframe['close'] > dataframe['open']
@@ -494,12 +502,15 @@ class MyStrategy(IStrategy):
         )
 
         # B) Trough en zona profunda BB + rebote
-        # Complementa A: mismo patrón trough+recovery pero sin exigir ll_10 (10-bar low).
-        # Dispara cuando: (1) ayer fue trough 6h Y estaba muy profundo en BB (bb_percent≤0.10),
-        # (2) hoy rebotó ≥0.8%, verde, vol, RSI girando. Captura fondos en sell-off técnico fuerte.
+        # Usa loc_trough_4h (4h) OR loc_trough (6h) para mayor frecuencia.
+        # La calidad extra viene de bb_percent.shift(1) ≤ 0.10 (muy profundo en BB = caída real).
+        trough_any_B = (
+            dataframe['loc_trough'].shift(1).fillna(False) |
+            dataframe['loc_trough_4h'].shift(1).fillna(False)
+        )
         B = (
-            dataframe['loc_trough'].shift(1).fillna(False) &          # trough AYER (6h low)
-            (dataframe['bb_percent'].shift(1) <= 0.10) &              # ayer muy profundo en BB (cerca/bajo banda inferior)
+            trough_any_B &
+            (dataframe['bb_percent'].shift(1) <= 0.10) &              # ayer muy profundo en BB
             (dataframe['close'] >= dataframe['low'].shift(1) * 1.008) &  # ≥0.8% rebote desde trough
             (dataframe['rsi'] > dataframe['rsi_prev']) &               # RSI girando al alza
             (dataframe['close'] >= dataframe['open']) &                # verde hoy
@@ -508,15 +519,10 @@ class MyStrategy(IStrategy):
         )
 
         # C) Trough + StochRSI cruce oversold → bullish
-        # stoch_k_prev < stoch_d_prev: AYER K estaba BAJO D (bearish/oversold en el trough).
-        # stoch_k_prev < 36 y stoch_d_prev < 36: ambos en zona oversold (= trough con StochRSI extremo).
-        # stoch_k > stoch_d HOY: crossover bullish = señal de giro confirmada.
-        # ema_slow >= ema_slow.shift(48): EMA200 no está cayendo en las últimas 12h (48×15m).
-        #   En un bear market sostenido, EMA200 declina continuamente → bloquea señales falsas.
-        #   En correcciones de bull market, EMA200 sigue plana/alcista → permite las entradas.
-        # bb_zone_ok (≤ 0.68) permissivo: los ganadores de C son precisamente los que rebotaron fuerte.
+        # Mantiene loc_trough 6h — el StochRSI crossover sin el filtro de calidad del 6h
+        # captura demasiado ruido (4h trough testado: bajó de 59% a 47% WR en C).
         C = (
-            dataframe['loc_trough'].shift(1).fillna(False) &             # trough AYER (6h low)
+            dataframe['loc_trough'].shift(1).fillna(False) &             # trough AYER (6h low — calidad)
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &    # AYER: K bajo D (bearish oversold)
             (dataframe['stoch_k_prev'] < self.buy_c_stoch_max.value) &   # AYER: K < 36 (zona oversold)
             (dataframe['stoch_d_prev'] < self.buy_c_stoch_max.value) &   # AYER: D < 36
@@ -538,9 +544,8 @@ class MyStrategy(IStrategy):
             (dataframe['close'] >= dataframe['open'])
         )
 
-        # E) DESACTIVADO: EMA8 pullback incompatible con SL -2% en mercados volátiles
-        # En uptrend, precio oscila ±2% alrededor de EMA8 normalmente → SL -2% = ruido
-        # 28.6% WR en 2024-2025 confirmado. Usar SL más amplio para esta condición o no usarla.
+        # E) DESACTIVADO: genera 0 trades en backtest (ADX>27 + RSI>55 + precio pegado a EMA8
+        # simultáneamente es extremadamente raro). Pendiente de rediseño.
         E = pd.Series(False, index=dataframe.index)
 
         # F) Trough + RSI muy extremo en el fondo (solo condiciones de capitulación real)
