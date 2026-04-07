@@ -406,7 +406,12 @@ class MyStrategy(IStrategy):
         # Umbral: BTC cae >8% en 8h Y sigue cayendo >2% en la última 1h (crash activo, no rebotando).
         # Correcciones normales de bull market (BTC -3/-5% en 4h) NO activan el filtro → entradas OK.
         # H e I quedan libres (diseñados para pánico extremo).
+        # BTC como señal macro bidireccional:
+        #   btc_macro_crash: BTC -8% en 8h Y -2% en 1h → bloquea entradas (crash correlacionado)
+        #   btc_boost:       BTC +2% a +7% en 4h → relaja bb_zone en entradas (altcoins siguen a BTC)
+        #                    función cuadrática: pico en +3.5%, cero en 0% y en +7%
         dataframe['btc_macro_crash'] = False
+        dataframe['btc_boost'] = 0.0
         if self.dp:
             btc_df = self.dp.get_pair_dataframe('BTC/USDC', self.timeframe)
             if btc_df is not None and len(btc_df) > 40:
@@ -414,11 +419,16 @@ class MyStrategy(IStrategy):
                 btc_close = btc_df.set_index('date')['close']
                 btc_series = dataframe['date'].map(btc_close).ffill()
                 btc_pct_8h = (btc_series / btc_series.shift(32) - 1)   # cambio en 8h (32×15m)
+                btc_pct_4h = (btc_series / btc_series.shift(16) - 1)   # cambio en 4h (16×15m)
                 btc_pct_1h = (btc_series / btc_series.shift(4)  - 1)   # cambio en 1h (4×15m)
                 dataframe['btc_macro_crash'] = (
                     (btc_pct_8h < -0.08) &    # BTC bajó >8% en las últimas 8h (crash real)
                     (btc_pct_1h < -0.02)      # Y sigue cayendo >2% en 1h (activo, no rebotando)
                 ).fillna(False)
+                # Boost cuadrático: f(x) = x*(1-x/0.07), pico 0.175 a x=3.5%, cero en x=0% y x=7%
+                # Clipeado [0%, 7%] para no invertir el signo fuera del rango útil
+                btc_x = btc_pct_4h.clip(0, 0.07)
+                dataframe['btc_boost'] = (btc_x * (1 - btc_x / 0.07)).clip(0, 0.20).fillna(0.0)
 
 
         return dataframe
@@ -442,8 +452,13 @@ class MyStrategy(IStrategy):
             (dataframe['rsi'] > self.NO_BUY_RSI_MIN)        # RSI > 68
         )
 
-        # Zonas de valor — usa parámetro hyperopt si está disponible
-        bb_zone_ok = (dataframe['bb_percent'] <= self.buy_bb_zone_ok.value)
+        # Zonas de valor — bb_zone_boosted relaja el threshold cuando BTC está subiendo (+2%→+7% en 4h)
+        # Boost máximo (~+5pp en bb_percent) cuando BTC sube +3.5% en 4h.
+        # H (contrarian/pánico) usa bb_zone_ok sin boost — cuando BTC cae, no hay boost positivo.
+        btc_boost = dataframe['btc_boost']
+        bb_zone_ok      = (dataframe['bb_percent'] <= self.buy_bb_zone_ok.value)
+        bb_zone_boosted = (dataframe['bb_percent'] <= (self.buy_bb_zone_ok.value + btc_boost * 0.30))
+        bb_deep_zone    = (dataframe['bb_percent'] <= (0.30 + btc_boost * 0.20))  # HOY en zona oversold (boost si BTC sube)
 
         lower_wick = dataframe['lower_wick']
         body       = (dataframe['close'] - dataframe['open']).abs()
@@ -463,11 +478,9 @@ class MyStrategy(IStrategy):
 
         base_filter = anti_cuchillo & ~no_buy_high & anti_chase
 
-        # A) Mínimo local: trough AYER + entry HOY cuando precio aún en zona baja BB (≤30%).
-        # bb_deep_zone (hoy ≤ 0.30): precio sigue en zona baja incluso después del rebote.
-        # Este doble filtro — trough ayer + zona baja hoy — garantiza calidad: solo entramos
-        # cuando la recuperación no ha alejado el precio de la zona de valor.
-        bb_deep_zone = (dataframe['bb_percent'] <= 0.30)  # HOY sigue en zona oversold
+        # A) Mínimo local: trough AYER + entry HOY cuando precio aún en zona baja BB.
+        # bb_deep_zone con boost: base 0.30, +boost si BTC sube (+2%→+7% en 4h).
+        # Cuando BTC tira del mercado, permite entrar aunque el altcoin haya rebotado un poco más.
         A = (
             dataframe['loc_trough'].shift(1).fillna(False) &            # trough AYER (6h low)
             (dataframe['low'].shift(1) <= dataframe['ll_10'].shift(1) * self.A_LL10_MULT) &  # ayer en 10-bar low
@@ -514,7 +527,7 @@ class MyStrategy(IStrategy):
             dataframe['vol_spike'] &
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &
             (dataframe['ema_slow'] >= dataframe['ema_slow'].shift(48)) & # EMA200 plana/alcista últimas 12h
-            (bb_zone_ok)                                                  # precio no muy arriba en BB
+            (bb_zone_boosted)                                             # precio no muy arriba en BB (relajado si BTC sube)
         )
 
         # D) Capitulación: caída fuerte + cola larga + rebote verde
@@ -542,7 +555,7 @@ class MyStrategy(IStrategy):
             (dataframe['close'] >= dataframe['open']) &                  # verde: rebote real
             (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) & # MACD no empeora
             dataframe['vol_spike'] &                                     # volumen confirmado
-            (bb_zone_ok) &
+            (bb_zone_boosted) &                                          # relajado si BTC sube
             news_not_bearish                                             # noticias no bajistas
         )
 
@@ -823,6 +836,20 @@ class MyStrategy(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
+        # BTC reversal exit: si BTC cae >2.5% en 1h mientras el trade tiene beneficio,
+        # los altcoins siguen a BTC a la baja con 1-3 barras de retraso → cerrar antes.
+        # No aplica en pérdidas (ya tiene el SL) ni en los primeros 3 bars (demasiado pronto).
+        if current_profit is not None and current_profit > self.MIN_PROFIT_NET:
+            try:
+                btc_df = self.dp.get_pair_dataframe('BTC/USDC', self.timeframe)
+                if btc_df is not None and len(btc_df) > 8:
+                    btc_close = btc_df['close']
+                    btc_pct_1h = float(btc_close.iloc[-1] / btc_close.iloc[-5] - 1)  # 4 barras = 1h
+                    if btc_pct_1h < -0.025:  # BTC cayó >2.5% en 1h
+                        return "btc_reversal_exit"
+            except Exception:
+                pass
+
         # Crash guard
         if self._crash_incoming(pair):
             if (current_profit is None) or (current_profit > self.MIN_PROFIT_NET):
