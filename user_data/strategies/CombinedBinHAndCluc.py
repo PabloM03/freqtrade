@@ -217,6 +217,11 @@ class MyStrategy(IStrategy):
     BB20_WINDOW = BB20_WINDOW
     BB20_STDS = BB20_STDS
 
+    # Exit debounce cache — previene loops de cancelación de órdenes
+    # custom_exit se llama cada ~5s; los datos de vela son iguales durante 15min
+    # → sin este guard, cualquier señal de salida dispara en todos los ticks de la vela
+    _exit_bar_cache: set = set()  # {(trade_id, bar_start_rounded)}
+
     # ---------------------- HYPEROPT PARAMETERS ----------------------
     # Espacio de búsqueda para optimización automática de parámetros
     # Umbrales de señal de entrada
@@ -833,6 +838,38 @@ class MyStrategy(IStrategy):
 
     # ---------------------- EXITS (alineadas con picos/vales óptimos) ----------------------
     def custom_exit(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        **kwargs
+    ) -> Optional[str]:
+        # Debounce: un exit por vela por trade.
+        # Sin este guard, cualquier condición True dispara en todos los ~180 ticks de la vela
+        # → freqtrade crea nueva orden de venta cada tick → cancela la anterior → loop infinito.
+        try:
+            bar_start = current_time.replace(
+                second=0, microsecond=0,
+                minute=(current_time.minute // 15) * 15
+            )
+            bar_key = (trade.id, bar_start)
+            if bar_key in self._exit_bar_cache:
+                return None
+        except Exception:
+            bar_key = None
+
+        reason = self._eval_exit(pair, trade, current_time, current_rate, current_profit, **kwargs)
+
+        if reason is not None and bar_key is not None:
+            self._exit_bar_cache.add(bar_key)
+            if len(self._exit_bar_cache) > 500:
+                self._exit_bar_cache.clear()
+
+        return reason
+
+    def _eval_exit(
         self,
         pair: str,
         trade: Trade,
