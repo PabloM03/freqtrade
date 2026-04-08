@@ -841,20 +841,6 @@ class MyStrategy(IStrategy):
         current_profit: float,
         **kwargs
     ) -> Optional[str]:
-        # BTC reversal exit: si BTC cae >2.5% en 1h mientras el trade tiene beneficio,
-        # los altcoins siguen a BTC a la baja con 1-3 barras de retraso → cerrar antes.
-        # No aplica en pérdidas (ya tiene el SL) ni en los primeros 3 bars (demasiado pronto).
-        if current_profit is not None and current_profit > self.MIN_PROFIT_NET:
-            try:
-                btc_df = self.dp.get_pair_dataframe('BTC/USDC', self.timeframe)
-                if btc_df is not None and len(btc_df) > 8:
-                    btc_close = btc_df['close']
-                    btc_pct_1h = float(btc_close.iloc[-1] / btc_close.iloc[-5] - 1)  # 4 barras = 1h
-                    if btc_pct_1h < -0.025:  # BTC cayó >2.5% en 1h
-                        return "btc_reversal_exit"
-            except Exception:
-                pass
-
         # Crash guard
         if self._crash_incoming(pair):
             if (current_profit is None) or (current_profit > self.MIN_PROFIT_NET):
