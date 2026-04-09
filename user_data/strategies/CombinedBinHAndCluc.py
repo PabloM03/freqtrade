@@ -431,9 +431,10 @@ class MyStrategy(IStrategy):
                 # map() preserva el índice entero del dataframe (reindex daría índice datetime → NaN al asignar)
                 btc_close = btc_df.set_index('date')['close']
                 btc_series = dataframe['date'].map(btc_close).ffill()
-                btc_pct_8h = (btc_series / btc_series.shift(32) - 1)   # cambio en 8h (32×15m)
-                btc_pct_4h = (btc_series / btc_series.shift(16) - 1)   # cambio en 4h (16×15m)
-                btc_pct_1h = (btc_series / btc_series.shift(4)  - 1)   # cambio en 1h (4×15m)
+                btc_pct_8h  = (btc_series / btc_series.shift(32)   - 1)   # cambio en 8h  (32×15m)
+                btc_pct_4h  = (btc_series / btc_series.shift(16)   - 1)   # cambio en 4h  (16×15m)
+                btc_pct_1h  = (btc_series / btc_series.shift(4)    - 1)   # cambio en 1h  (4×15m)
+                btc_pct_30d = (btc_series / btc_series.shift(2880) - 1)   # cambio en 30d (2880×15m)
                 dataframe['btc_macro_crash'] = (
                     (btc_pct_8h < -0.08) &    # BTC bajó >8% en las últimas 8h (crash real)
                     (btc_pct_1h < -0.02)      # Y sigue cayendo >2% en 1h (activo, no rebotando)
@@ -442,6 +443,9 @@ class MyStrategy(IStrategy):
                 # Clipeado [0%, 7%] para no invertir el signo fuera del rango útil
                 btc_x = btc_pct_4h.clip(0, 0.07)
                 dataframe['btc_boost'] = (btc_x * (1 - btc_x / 0.07)).clip(0, 0.20).fillna(0.0)
+                # Filtro bear market para H: BTC no puede llevar >30 días cayendo >18%
+                # Evita que H dispare repetidamente en downtrends prolongados (F&G crónico <30 en bears)
+                dataframe['btc_bear_market'] = (btc_pct_30d < -0.18).fillna(False)
 
 
         return dataframe
@@ -635,7 +639,10 @@ class MyStrategy(IStrategy):
         base_filter_trough = anti_cuchillo & ~no_buy_high & ema50_ok & no_macro_crash
 
         # base_filter_trough_panic: sin no_macro_crash — para H e I (contrarian panic entries)
-        base_filter_trough_panic = anti_cuchillo & ~no_buy_high & ema50_ok
+        # btc_not_bear: H no dispara si BTC lleva >30 días cayendo >18% (bear prolongado)
+        # Problema original: F&G < 30 es crónico en bears → H entraba repetidamente en cuchillos caídos
+        btc_not_bear = ~dataframe['btc_bear_market'].astype(bool) if 'btc_bear_market' in dataframe.columns else pd.Series(True, index=dataframe.index)
+        base_filter_trough_panic = anti_cuchillo & ~no_buy_high & ema50_ok & btc_not_bear
 
         # base_filter con tendencia para condiciones que no usan trough-shift (J, etc.)
         base_filter_trend = base_filter & ema50_ok & no_macro_crash
