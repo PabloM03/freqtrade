@@ -40,7 +40,6 @@
       "ccxt_async_config": {},
       "pair_whitelist": [
         "BTC/USDC",
-        "SOL/USDC",
         "LINK/USDC",
         "PEPE/USDC",
         "SHIB/USDC",
@@ -50,7 +49,7 @@
       ],
       "pair_blacklist": [
         "XRP/.*", "AVAX/.*", "LTC/.*", "BNB/.*", "WBTC/.*", "WETH/.*",
-        "DOGE/.*", "ETH/.*", "ADA/.*", "FLOKI/.*",
+        "DOGE/.*", "ETH/.*", "ADA/.*", "FLOKI/.*", "SOL/.*",
         "EUR/.*", "EURC/.*", "EURI/.*", "EURS/.*",
         "PAXG/.*", "XAUT/.*",
         "STETH/.*", "WSTETH/.*", "CBETH/.*", "RETH/.*",
