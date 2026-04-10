@@ -66,8 +66,8 @@ C_STOCH_MAX = 25                                        # 15m: oversold selectiv
 # D) Capitulación (solo si es capitulación “de verdad” en 15m)
 D_PCT1_MAX = -2.5
 D_PCT3_MAX = -5.0
-D_BB_PERCENT_MAX = 0.055                                # pegado a banda inferior
-D_TAIL_ATR_MULT = 1.15                                  # mecha larga clara (rebote probable)
+D_BB_PERCENT_MAX = 0.20                                 # en tercio inferior de BB (no solo el fondo)
+D_TAIL_ATR_MULT = 0.70                                  # mecha significativa (no necesariamente extrema)
 
 # E) Pullback a EMA8 (más exigente)
 E_RSI_MIN = 55                                          # pullback solo con fuerza real (RSI>55 = tendencia establecida)
@@ -150,11 +150,8 @@ class MyStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = True
-    trailing_stop = True
-    trailing_stop_positive = 0.010          # trail 1% desde el pico
-    trailing_stop_positive_offset = 0.025   # se activa cuando profit >= 2.5%
-    trailing_only_offset_is_reached = True
-    use_custom_stoploss = False
+    trailing_stop = False                   # gestionado por custom_stoploss (JSON override = false)
+    use_custom_stoploss = True              # custom_stoploss() activo: ATR trailing desde +3% profit
     minimal_roi = {"0": 10.0}
     MIN_HOLD_BARS = 3
 
@@ -545,12 +542,15 @@ class MyStrategy(IStrategy):
             (bb_zone_boosted)                                             # precio no muy arriba en BB (relajado si BTC sube)
         )
 
-        # D) Capitulación: caída fuerte + cola larga + rebote verde
+        # D) Capitulación: caída brusca + mecha larga AYER → confirmación verde HOY
+        # Patrón shift(1): la capitulación ocurrió en la vela anterior, hoy confirma el rebote.
+        # La condición original era lógicamente imposible en 15m: pct_1<=-2.5% con close>=open
+        # requiere gap-down que no existe intradía (open≈prev_close → si close<0.975×prev_close, es roja).
         D = (
-            ((dataframe['pct_1'] <= self.D_PCT1_MAX) | (dataframe['pct_3'] <= self.D_PCT3_MAX)) &
-            (dataframe['bb_percent'] <= self.D_BB_PERCENT_MAX) &
-            (dataframe['tail'] >= dataframe['atr'] * self.D_TAIL_ATR_MULT) &
-            (dataframe['close'] >= dataframe['open'])
+            ((dataframe['pct_1'].shift(1) <= self.D_PCT1_MAX) | (dataframe['pct_3'].shift(1) <= self.D_PCT3_MAX)) &
+            (dataframe['bb_percent'].shift(1) <= self.D_BB_PERCENT_MAX) &
+            (dataframe['tail'].shift(1) >= dataframe['atr'].shift(1) * self.D_TAIL_ATR_MULT) &
+            (dataframe['close'] >= dataframe['open'])   # hoy verde: rebote confirmado
         )
 
         # E) DESACTIVADO: genera 0 trades en backtest (ADX>27 + RSI>55 + precio pegado a EMA8
@@ -587,6 +587,13 @@ class MyStrategy(IStrategy):
             (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value) &
             (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value) &
             (dataframe['close']    >= dataframe['close'].shift(192)    * 0.80)  # no caída >20% en 48h (bloquea CETUS-type)
+        )
+        # Para D_capitulation: solo slopes, sin requisito close>=EMA200.
+        # D dispara DESPUÉS de una caída brusca → precio necesariamente por debajo de EMA200.
+        # Exigir close>=EMA200×0.989 bloquearía todos los eventos de capitulación reales.
+        ema50_slope_ok = (
+            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * self.buy_ema50_slope_48h.value) &
+            (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value)
         )
 
         # H) Panic Entry — Fear & Greed en Extreme Fear (contrarian máximo)
@@ -631,7 +638,7 @@ class MyStrategy(IStrategy):
         # El rebote verde dentro de la misma vela ya ES la confirmación de soporte.
         no_macro_crash = ~dataframe['btc_macro_crash'].astype(bool)
 
-        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_ok & no_macro_crash
+        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_slope_ok & no_macro_crash
 
         # base_filter para entradas trough+recovery (A, B, C, F)
         # no_macro_crash: bloquea crashes macro correlacionados (BTC -8% en 8h Y -2% en 1h)
@@ -1041,33 +1048,42 @@ class MyStrategy(IStrategy):
         current_profit: float,
         **kwargs
     ) -> float:
-        if current_profit is None or current_profit < 0.03:
-            # stoploss_from_open fija el stop en open-5% independientemente del precio actual
-            # Evita que el stop suba mientras el trade está en pérdidas o beneficio mínimo
-            return stoploss_from_open(current_profit if current_profit else 0.0, abs(self.stoploss))
+        # stoploss_from_open(open_relative_stop, current_profit):
+        #   open_relative_stop: distancia deseada desde el precio de apertura (negativo = pérdida).
+        #   current_profit:     beneficio actual del trade.
+        #   Devuelve: stoploss como fracción del precio actual (negativo).
+        #
+        # open_relative_stop = current_profit - trail_pct
+        #   Ejemplo: profit=5%, trail=1% → stop_open=4% → stop = current × (1 - 1%) ≈ peak × 0.99
+        #
+        # Por qué custom_stoploss en vez de trailing_stop en JSON:
+        #   trailing_stop=True crea órdenes límite en el exchange que se cancelan y reemplazan
+        #   cada vez que el precio sube → loop "cancel to be replaced". custom_stoploss no crea
+        #   órdenes límite: freqtrade compara en cada tick y coloca orden de mercado al activarse.
 
-        try:
-            df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
-            last = df.iloc[-1]
-            atr = float(last['atr'])
-            adx = float(last['adx'])
-            roc5 = float(last['roc5'])
-        except Exception:
-            return stoploss_from_open(current_profit, self.FALLBACK_TRAIL_DIST)
+        p = current_profit if current_profit is not None else 0.0
 
-        strong_trend = (adx >= self.ADX_STRONG_TREND and roc5 > 0)
-        vertical_rally = (roc5 >= self.ROC5_VERTICAL)
+        if p < 0.025:
+            # Stoploss fijo en -SL% desde apertura (no trail aún).
+            # Equivalente al stoploss estático antes de activar trailing_stop_positive.
+            return stoploss_from_open(-abs(self.stoploss), p)
 
-        k = self.TRAIL_ATR_MULT_HIGH if current_profit > 0.06 else self.TRAIL_ATR_MULT_LOW
-        dist = (k * atr) / max(current_rate, 1e-9)
-        dist = min(self.TRAIL_DIST_MAX, max(self.TRAIL_DIST_MIN, dist))
+        # Profit ≥ 2.5%: trailing activo.
+        # Para profits bajos/medios (2.5–8%): trail ajustado de 1% (igual que JSON trailing_stop_positive=0.01).
+        # Para profits altos (>8%): trail ATR — deja correr memes sin cortar demasiado pronto.
+        if p <= 0.08:
+            trail = 0.01    # 1% desde el pico — idéntico al JSON original
+        else:
+            try:
+                df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
+                last = df.iloc[-1]
+                atr = float(last['atr'])
+                roc5 = float(last['roc5'])
+                # ATR-trail pero no más ancho que 6% ni más estrecho que 2%
+                trail = min(0.06, max(0.02, self.TRAIL_ATR_MULT_LOW * atr / max(current_rate, 1e-9)))
+                if float(roc5) >= self.ROC5_VERTICAL:
+                    trail = max(trail, 0.04)   # en vertical rally, dar más holgura
+            except Exception:
+                trail = self.FALLBACK_TRAIL_DIST
 
-        if vertical_rally:
-            dist = max(dist, self.TRAIL_VERTICAL_MIN)
-        elif not strong_trend:
-            dist = min(dist, 0.02)
-
-        if 0.03 <= current_profit < 0.06:
-            return stoploss_from_open(current_profit, max(0.018, dist))
-
-        return stoploss_from_open(current_profit, dist)
+        return stoploss_from_open(p - trail, p)

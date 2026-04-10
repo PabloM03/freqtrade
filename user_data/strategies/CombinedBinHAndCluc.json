@@ -5,10 +5,7 @@
       "0": 10.0
     },
     "trailing": {
-      "trailing_stop": true,
-      "trailing_stop_positive": 0.01,
-      "trailing_stop_positive_offset": 0.025,
-      "trailing_only_offset_is_reached": true
+      "trailing_stop": false
     },
     "max_open_trades": {
       "max_open_trades": 3
