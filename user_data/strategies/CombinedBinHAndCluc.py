@@ -546,12 +546,13 @@ class MyStrategy(IStrategy):
         # Patrón shift(1): la capitulación ocurrió en la vela anterior, hoy confirma el rebote.
         # La condición original era lógicamente imposible en 15m: pct_1<=-2.5% con close>=open
         # requiere gap-down que no existe intradía (open≈prev_close → si close<0.975×prev_close, es roja).
-        D = (
-            ((dataframe['pct_1'].shift(1) <= self.D_PCT1_MAX) | (dataframe['pct_3'].shift(1) <= self.D_PCT3_MAX)) &
-            (dataframe['bb_percent'].shift(1) <= self.D_BB_PERCENT_MAX) &
-            (dataframe['tail'].shift(1) >= dataframe['atr'].shift(1) * self.D_TAIL_ATR_MULT) &
-            (dataframe['close'] >= dataframe['open'])   # hoy verde: rebote confirmado
-        )
+        # D) DESACTIVADO: tested exhaustivamente — no añade valor en los 8 pares actuales.
+        # Concepto: caída brusca (pct_1.shift(1) <= -2.5%) + verde hoy. El problema:
+        # D solo dispara cuando A/B/C no disparan → captura los casos de peor calidad (rechazados
+        # por las condiciones de RSI/vol/EMA que A/B/C requieren). WR 50-63% → destruye valor.
+        # Los "capitulation trades" que inspiraron D (ALGO, TAO) son pares del VolumePairList
+        # no incluidos en los 8 pares de backtest. Pendiente rediseño para pares específicos.
+        D = pd.Series(False, index=dataframe.index)
 
         # E) DESACTIVADO: genera 0 trades en backtest (ADX>27 + RSI>55 + precio pegado a EMA8
         # simultáneamente es extremadamente raro). Pendiente de rediseño.
@@ -638,7 +639,7 @@ class MyStrategy(IStrategy):
         # El rebote verde dentro de la misma vela ya ES la confirmación de soporte.
         no_macro_crash = ~dataframe['btc_macro_crash'].astype(bool)
 
-        base_filter_D = anti_cuchillo_D & ~no_buy_high & ema50_slope_ok & no_macro_crash
+        base_filter_D = anti_cuchillo_D & ema50_slope_ok & no_macro_crash
 
         # base_filter para entradas trough+recovery (A, B, C, F)
         # no_macro_crash: bloquea crashes macro correlacionados (BTC -8% en 8h Y -2% en 1h)
