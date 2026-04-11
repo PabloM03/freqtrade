@@ -564,7 +564,7 @@ class MyStrategy(IStrategy):
         news_not_bearish = (dataframe['ai_score'] > -0.25)
         F = (
             dataframe['loc_trough'].shift(1).fillna(False) &            # trough AYER (6h low)
-            (dataframe['rsi_prev'] < 26) &                              # RSI muy extremo en el trough
+            (dataframe['rsi_prev'] < self.buy_f_rsi_max.value) &         # RSI extremo en el trough
             (dataframe['close'] >= dataframe['low'].shift(1) * 1.012) &  # ≥1.2% rebote (más exigente)
             (dataframe['rsi'] > dataframe['rsi_prev']) &                 # RSI subiendo hoy
             (dataframe['close'] >= dataframe['open']) &                  # verde: rebote real
