@@ -584,7 +584,7 @@ class MyStrategy(IStrategy):
         # ema20_ht (EMA80@15m = 20h) no bajando >5.2% en 24h (96×15m)
         # Precio no más del 1.1% por debajo de EMA200@15m
         ema50_ok = (
-            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * self.buy_ema50_slope_48h.value) &
+            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(96)  * self.buy_ema50_slope_48h.value) &
             (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value) &
             (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value) &
             (dataframe['close']    >= dataframe['close'].shift(192)    * 0.80)  # no caída >20% en 48h (bloquea CETUS-type)
