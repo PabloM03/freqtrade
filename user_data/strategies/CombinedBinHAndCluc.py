@@ -526,7 +526,7 @@ class MyStrategy(IStrategy):
 
         # C) Trough + StochRSI cruce oversold → bullish
         # Mantiene loc_trough 6h — el StochRSI crossover sin el filtro de calidad del 6h
-        # captura demasiado ruido (4h trough testado: bajó de 59% a 47% WR en C).
+        # captura demasiado ruido (4h trough testado: -59%→47% WR; shift(2) testado: -$17).
         C = (
             dataframe['loc_trough'].shift(1).fillna(False) &             # trough AYER (6h low — calidad)
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &    # AYER: K bajo D (bearish oversold)
@@ -597,23 +597,26 @@ class MyStrategy(IStrategy):
             (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value)
         )
 
-        # H) Panic Entry — Fear & Greed en Extreme Fear (contrarian máximo)
-        # Redesignado con patrón trough.shift(1) + recovery (igual que A/B/C):
-        # - AYER fue el trough (mínimo 6h), hoy entramos tras confirmar rebote.
-        # - SL queda 1%+ por debajo del soporte real (trough ayer) → no lo toca el retest normal.
-        # - rsi_prev < 42: RSI fue oversold en el trough. Filtra el bear sostenido donde F&G < 30
-        #   es frecuente pero no hay reversión real (RSI se queda en 35-45 sin caer a oversold).
-        # - Rebote ≥1% + verde: confirma que el soporte aguantó y el precio está volviendo.
-        H = (
-            (dataframe['fear_greed'] < self.buy_fg_fear.value) &     # mercado en pánico extremo (F&G < 30)
-            dataframe['loc_trough'].shift(1).fillna(False) &          # trough AYER (6h low — soporte confirmado)
-            (dataframe['rsi_prev'] < 42) &                            # RSI fue oversold AYER (caída real, no drift)
-            (dataframe['rsi'] > dataframe['rsi_prev']) &              # RSI girando al alza HOY
-            (dataframe['close'] >= dataframe['low'].shift(1) * 1.010) & # ≥1% rebote desde trough
-            (dataframe['close'] >= dataframe['open']) &               # verde: rebote real
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
+        # H) DESACTIVADO: 50% WR, -$10 en 2024-2025. F&G < 30 crónico en correcciones → captura
+        # entradas mediocres que las demás condiciones ya rechazan por buenas razones.
+        H = pd.Series(False, index=dataframe.index)
+
+        # K) MACD zero-cross en zona oversold → giro de momentum confirmado
+        # No depende de loc_trough — captura el giro 1-2 candles después del fondo cuando
+        # A/B/C ya no disparan (trough fue hace más de 1 vela). Guardas:
+        # - macdhist.shift(1) < 0: momentum era negativo (venimos de zona bajista)
+        # - macdhist > 0: cruzó a positivo esta vela (momentum giró)
+        # - rsi < 45: precio aún en zona baja (no comprar en recuperación avanzada)
+        # - bb_zone_ok: precio no arriba del todo en la BB
+        # - No usa loc_trough → usa base_filter_trend (con anti_chase completo como guardia)
+        K_macd_cross = (
+            (dataframe['macdhist'] > 0) &                             # MACD hist cruza a positivo HOY
+            (dataframe['macdhist'].shift(1) <= 0) &                   # era negativo/cero ayer
+            (dataframe['rsi'] < 45) &                                 # aún en zona baja (no recuperado)
+            (dataframe['rsi'] > dataframe['rsi_prev']) &              # RSI girando al alza
+            (dataframe['close'] >= dataframe['open']) &               # verde: confirmación
             dataframe['vol_spike'] &                                  # volumen confirmando
-            (bb_zone_ok)                                              # zona baja BB
+            (bb_zone_ok)                                              # no arriba del todo en BB
         )
 
         # I) RSI Ultra-Extremo — bypass de anti_chase cuando crash es de capitulación real
@@ -684,11 +687,13 @@ class MyStrategy(IStrategy):
         mask_E = E & base_filter_E & ~mask_A & ~mask_B & ~mask_C & ~mask_D
         mask_F = F & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
-        # H: Panic Entry — usa base_filter_trough_panic (sin no_macro_crash: H dispara EN el crash)
+        # H: DESACTIVADO — mask_H = False siempre
         mask_H = H & base_filter_trough_panic & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
         # I: RSI crash ultra-extremo — sin no_macro_crash (capitulación extrema, puede ser crash macro)
         base_filter_I = anti_cuchillo_D & ema50_ok
         mask_I = I_rsi_crash & base_filter_I & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H
+        # K: MACD zero-cross en oversold — usa base_filter_trend (anti_chase completo, sin trough anchor)
+        mask_K = K_macd_cross & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
         # J) AI News Entry — solo disponible en live trading cuando ops/analyze_news.py corre
         # Concepto: noticia temática bullish fuerte (ai_score > 0.3) + coin técnicamente sobrevendida
@@ -734,6 +739,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
+
+        dataframe.loc[mask_K, 'enter_long'] = 1
+        dataframe.loc[mask_K, 'enter_tag'] = 'K_macd_cross'
 
         return dataframe
 
