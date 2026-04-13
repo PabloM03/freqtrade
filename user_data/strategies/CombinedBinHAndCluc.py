@@ -526,34 +526,21 @@ class MyStrategy(IStrategy):
         G = pd.Series(False, index=dataframe.index)
 
         # Filtro de tendencia triple (usa EMAs de alta temporalidad para consistencia con 1h):
-        # ema50_ht (EMA200@15m = 50h) no bajando >1.4% en 48h (192×15m)
+        # ema50_ht (EMA200@15m = 50h) no bajando >1.4% en 24h (96×15m)
+        # Lookback 24h (no 48h): reacciona antes en recuperaciones — la EMA200 tardaba
+        # demasiado en girar tras correcciones aunque el precio ya estuviera subiendo.
         # ema20_ht (EMA80@15m = 20h) no bajando >5.2% en 24h (96×15m)
         # Precio no más del 1.1% por debajo de EMA200@15m
         ema50_ok = (
-            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(192) * self.buy_ema50_slope_48h.value) &
+            (dataframe['ema50_ht'] >= dataframe['ema50_ht'].shift(96)  * self.buy_ema50_slope_48h.value) &
             (dataframe['ema20_ht'] >= dataframe['ema20_ht'].shift(96)  * self.buy_ema20_slope_24h.value) &
             (dataframe['close']    >= dataframe['ema50_ht']            * self.buy_ema50_close_pct.value) &
-            (dataframe['close']    >= dataframe['close'].shift(192)    * 0.80)  # no caída >20% en 48h (bloquea CETUS-type)
+            (dataframe['close']    >= dataframe['close'].shift(192)    * 0.80)  # no caída >20% en 48h
         )
 
-        # H) Panic Entry — Fear & Greed en Extreme Fear (contrarian máximo)
-        # Redesignado con patrón trough.shift(1) + recovery (igual que A/B/C):
-        # - AYER fue el trough (mínimo 6h), hoy entramos tras confirmar rebote.
-        # - SL queda 1%+ por debajo del soporte real (trough ayer) → no lo toca el retest normal.
-        # - rsi_prev < 42: RSI fue oversold en el trough. Filtra el bear sostenido donde F&G < 30
-        #   es frecuente pero no hay reversión real (RSI se queda en 35-45 sin caer a oversold).
-        # - Rebote ≥1% + verde: confirma que el soporte aguantó y el precio está volviendo.
-        H = (
-            (dataframe['fear_greed'] < self.buy_fg_fear.value) &     # mercado en pánico extremo (F&G < 30)
-            dataframe['loc_trough'].shift(1).fillna(False) &          # trough AYER (6h low — soporte confirmado)
-            (dataframe['rsi_prev'] < 42) &                            # RSI fue oversold AYER (caída real, no drift)
-            (dataframe['rsi'] > dataframe['rsi_prev']) &              # RSI girando al alza HOY
-            (dataframe['close'] >= dataframe['low'].shift(1) * 1.010) & # ≥1% rebote desde trough
-            (dataframe['close'] >= dataframe['open']) &               # verde: rebote real
-            (dataframe['macdhist'] >= dataframe['macdhist'].shift(1)) &  # MACD no empeora
-            dataframe['vol_spike'] &                                  # volumen confirmando
-            (bb_zone_ok)                                              # zona baja BB
-        )
+        # H) DESACTIVADO: con lookback 24h en ema50_slope, H dispara en correcciones recientes
+        # con 0% WR (-$21 en 2024-2025). F&G < 30 es crónico en correcciones → entradas malas.
+        H = pd.Series(False, index=dataframe.index)
 
         # I) RSI Ultra-Extremo — bypass de anti_chase cuando crash es de capitulación real
         # Cuando RSI < 20 el activo ha caído tanto que la regla "close < EMA20" es redundante
