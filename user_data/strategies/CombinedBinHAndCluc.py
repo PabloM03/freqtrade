@@ -970,9 +970,9 @@ class MyStrategy(IStrategy):
         # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
         _LARGECAP = {'BTC/USDC', 'SOL/USDC', 'LINK/USDC', 'ETH/USDC', 'ADA/USDC'}
         if pair in _LARGECAP:
-            trail_threshold, trail_pct = 0.025, 0.010   # igual que antes
+            trail_threshold, trail_pct = 0.025, 0.010   # largecap: 2.5% umbral, 1% trail
         else:
-            trail_threshold, trail_pct = 0.035, 0.015   # meme: umbral mayor, trail algo más holgado
+            trail_threshold, trail_pct = 0.035, 0.010   # meme: 3.5% umbral, 1% trail (captura más en bounces 3.5-8%)
 
         if p < trail_threshold:
             return stoploss_from_open(-abs(self.stoploss), p)
