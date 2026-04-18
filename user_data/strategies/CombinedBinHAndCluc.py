@@ -30,7 +30,7 @@ HH_EMA_MIN_PROFIT = 0.025                             # salida HH + ruptura EMA8
 HARD_TP = 0.50                                        # TP 50% — deja correr a BONK/WIF/memes en bull runs
 
 # --- Stoploss y trailing (menos margen: candles de 15m tienen menos ruido) ---
-STOPLOSS_ABS = -0.02                                  # SL -2% + trailing 1% desde pico (JSON lo sobreescribe igual)
+STOPLOSS_ABS = -0.07                                  # SL -7% desde open (aguanta sacudidas antes de recuperar)
 TRAIL_ATR_MULT_LOW = 2.6                               # menos sensible (no te saca por ruido)
 TRAIL_ATR_MULT_HIGH = 3.6                              # deja correr tendencia fuerte
 TRAIL_DIST_MIN = 0.040
