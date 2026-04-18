@@ -43,7 +43,10 @@
         "LINK/USDC",
         "BONK/USDC",
         "WIF/USDC",
-        "TURBO/USDC"
+        "TURBO/USDC",
+        "PNUT/USDC",
+        "PENGU/USDC",
+        "FET/USDC"
       ],
       "pair_blacklist": [
         "XRP/.*", "AVAX/.*", "LTC/.*", "BNB/.*", "WBTC/.*", "WETH/.*",
