@@ -966,11 +966,19 @@ class MyStrategy(IStrategy):
     ) -> float:
         p = current_profit if current_profit is not None else 0.0
 
-        if p < 0.025:
+        # Large-caps (BTC, SOL, LINK) tienen movimientos más pequeños: trail más ajustado.
+        # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
+        _LARGECAP = {'BTC/USDC', 'SOL/USDC', 'LINK/USDC', 'ETH/USDC', 'ADA/USDC'}
+        if pair in _LARGECAP:
+            trail_threshold, trail_pct = 0.025, 0.010   # igual que antes
+        else:
+            trail_threshold, trail_pct = 0.035, 0.015   # meme: umbral mayor, trail algo más holgado
+
+        if p < trail_threshold:
             return stoploss_from_open(-abs(self.stoploss), p)
 
-        if p <= 0.08:
-            trail = 0.01
+        if p <= 0.10:
+            trail = trail_pct
         else:
             try:
                 df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
