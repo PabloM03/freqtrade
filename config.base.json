@@ -41,8 +41,6 @@
       "pair_whitelist": [
         "BTC/USDC",
         "LINK/USDC",
-        "PEPE/USDC",
-        "SHIB/USDC",
         "BONK/USDC",
         "WIF/USDC",
         "TURBO/USDC"
@@ -50,6 +48,7 @@
       "pair_blacklist": [
         "XRP/.*", "AVAX/.*", "LTC/.*", "BNB/.*", "WBTC/.*", "WETH/.*",
         "DOGE/.*", "ETH/.*", "ADA/.*", "FLOKI/.*", "SOL/.*",
+        "PEPE/.*", "SHIB/.*",
         "EUR/.*", "EURC/.*", "EURI/.*", "EURS/.*",
         "PAXG/.*", "XAUT/.*",
         "STETH/.*", "WSTETH/.*", "CBETH/.*", "RETH/.*",
