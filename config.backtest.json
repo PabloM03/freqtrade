@@ -19,7 +19,8 @@
       "LDO/USDC",
       "NEAR/USDC",
       "OP/USDC",
-      "TON/USDC"
+      "TON/USDC",
+      "HBAR/USDC"
     ]
   }
 }
