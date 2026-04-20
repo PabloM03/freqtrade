@@ -53,9 +53,11 @@
       "NEAR/USDC",
       "OP/USDC",
       "TON/USDC",
-      "HBAR/USDC"
+      "HBAR/USDC",
+      "SPK/USDC"
     ],
     "pair_blacklist": [
+      "GUN/.*",
       "ZRO/.*",
       "BLUR/.*",
       "ENJ/.*",
