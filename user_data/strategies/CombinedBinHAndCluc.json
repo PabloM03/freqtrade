@@ -5,10 +5,13 @@
       "0": 10.0
     },
     "trailing": {
-      "trailing_stop": false
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
     },
     "max_open_trades": {
-      "max_open_trades": 3
+      "max_open_trades": 5
     },
     "buy": {
       "buy_a_rsi_prev_max": 38,
@@ -18,10 +21,8 @@
       "buy_ema50_close_pct": 0.989,
       "buy_ema50_slope_48h": 0.986,
       "buy_f_rsi_max": 37,
-      "buy_fg_fear": 30,
       "buy_g_bb_zone": 0.42,
-      "buy_g_vol_mult": 2.8,
-      "buy_i_rsi_crash": 18
+      "buy_g_vol_mult": 2.8
     },
     "sell": {
       "sell_hh_ema_min": 0.055,
@@ -29,9 +30,9 @@
     },
     "protection": {},
     "stoploss": {
-      "stoploss": -0.07
+      "stoploss": -0.347
     }
   },
   "ft_stratparam_v": 1,
-  "export_time": "2026-03-13 17:09:20.000000+00:00"
+  "export_time": "2026-03-04 11:38:16.783082+00:00"
 }
