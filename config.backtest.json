@@ -13,7 +13,13 @@
       "TURBO/USDC",
       "PNUT/USDC",
       "PENGU/USDC",
-      "FET/USDC"
+      "FET/USDC",
+      "ACT/USDC",
+      "JTO/USDC",
+      "LDO/USDC",
+      "NEAR/USDC",
+      "OP/USDC",
+      "TON/USDC"
     ]
   }
 }
