@@ -491,13 +491,9 @@ class MyStrategy(IStrategy):
             (bb_zone_ok)                                                  # precio no muy arriba en BB
         )
 
-        # D) Capitulación: caída fuerte + cola larga + rebote verde
-        D = (
-            ((dataframe['pct_1'] <= self.D_PCT1_MAX) | (dataframe['pct_3'] <= self.D_PCT3_MAX)) &
-            (dataframe['bb_percent'] <= self.D_BB_PERCENT_MAX) &
-            (dataframe['tail'] >= dataframe['atr'] * self.D_TAIL_ATR_MULT) &
-            (dataframe['close'] >= dataframe['open'])
-        )
+        # D) DESACTIVADO: nunca dispara en práctica (A/B/C capturan todos los troughs)
+        # bb_percent ≤ 0.055 + pct_1 ≤ -2.5 + tail_atr + green = condiciones demasiado estrictas combinadas
+        D = pd.Series(False, index=dataframe.index)
 
         # E) DESACTIVADO: EMA8 pullback incompatible con SL -2% en mercados volátiles
         # En uptrend, precio oscila ±2% alrededor de EMA8 normalmente → SL -2% = ruido
