@@ -28,6 +28,10 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 CONFIG_BASE = ROOT / "config.base.json"
 CONFIG_BACKTEST = ROOT / "config.backtest.json"
+CONFIG_SECRETS = next(
+    (p for p in [ROOT / "config.secrets.json", ROOT / "ops" / "config.secrets.json"] if p.exists()),
+    ROOT / "config.secrets.json",
+)
 
 # Criterios de aprobación
 MIN_WR = 0.70        # 70% win rate mínimo
@@ -87,7 +91,7 @@ def download_pair_data(pair_usdc: str, timerange: str):
     code, _, err = run([
         "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
         "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST),
-        "-c", str(ROOT / "config.secrets.json"),
+        "-c", str(CONFIG_SECRETS),
         "--pairs", pair_usdc,
         "--timeframes", "15m",
         "--timerange", timerange,
@@ -111,7 +115,7 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
         code, *_ = run([
             "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
             "-c", str(CONFIG_BASE), "-c", str(tmp_cfg),
-            "-c", str(ROOT / "config.secrets.json"),
+            "-c", str(CONFIG_SECRETS),
             "-s", "MyStrategy",
             "--timerange", timerange,
             "--cache", "none"
