@@ -16,19 +16,25 @@ OPS="$BASE/ops"
 LOG_DIR="$OPS/logs"
 mkdir -p "$LOG_DIR"
 
+# Usar Python del conda env freqtrade (tiene anthropic, tavily-python, requests)
+# Fallback a python3 del sistema si no existe el env
+CONDA_PYTHON="/home/ubuntu/miniconda3/envs/freqtrade/bin/python3"
+PYTHON="${CONDA_PYTHON:-python3}"
+[ -x "$CONDA_PYTHON" ] && PYTHON="$CONDA_PYTHON"
+
 echo "[cron_daily] $(date -u +'%F %T') UTC — inicio"
 
 # 1. Fear & Greed + CoinGecko trending + Binance spikes + RSS news
 echo "[cron_daily] step 1: fetch_sentiment (Fear&Greed + trending + noticias)"
-python3 "$OPS/fetch_sentiment.py" && echo "[cron_daily] fetch_sentiment OK" || echo "[cron_daily] WARN: fetch_sentiment falló (no fatal)"
+"$PYTHON" "$OPS/fetch_sentiment.py" && echo "[cron_daily] fetch_sentiment OK" || echo "[cron_daily] WARN: fetch_sentiment falló (no fatal)"
 
 # 2. Análisis temático — funciona con TAVILY_API_KEY o ANTHROPIC_API_KEY (o keywords fallback)
 echo "[cron_daily] step 2: analyze_news (Tavily+keywords o Claude AI)"
-python3 "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
+"$PYTHON" "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
 
 # 3. Auto-validación de pares nuevos del VolumePairList
 echo "[cron_daily] step 3: validate_pairs (descarga + backtest pares no validados)"
-python3 "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló (whitelist sin cambios)"
+"$PYTHON" "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló (whitelist sin cambios)"
 
 echo "[cron_daily] $(date -u +'%F %T') UTC — fin"
 
