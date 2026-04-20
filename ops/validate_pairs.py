@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -37,9 +38,12 @@ MIN_TOTAL_PROFIT = 0  # profit total positivo
 
 # Pares que nunca deben añadirse (blacklist fija — probados y fallidos o riesgosos)
 PERMANENT_BLACKLIST = {
+    # Siempre excluidos (grandes caps que no encajan en estrategia reversal)
     "SOL", "PEPE", "SHIB", "DOGE", "ETH", "ADA", "XRP", "LTC", "AVAX",
     "FLOKI", "BNB", "WBTC", "WETH",
-    "MEME", "NEIRO", "BOME", "SUI", "ORDI",  # probados → negativos
+    # Testados y rechazados por backtest negativo
+    "MEME", "NEIRO", "BOME", "SUI", "ORDI",
+    "TIA", "WLD", "DOT", "DYDX",
 }
 
 
@@ -195,26 +199,55 @@ def add_to_blacklist(pair_usdc: str):
         print(f"  🚫 Blacklisteado en config.base.json: {pattern}")
 
 
+def get_binance_usdc_pairs(top_n: int = 40) -> set[str]:
+    """Consulta Binance REST API y devuelve los top N pares USDC por volumen 24h."""
+    try:
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        req = urllib.request.Request(url, headers={"User-Agent": "freqtrade-validator/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            tickers = json.loads(resp.read())
+        usdc = [
+            t for t in tickers
+            if t["symbol"].endswith("USDC") and not t["symbol"].endswith("BUSDC")
+        ]
+        usdc.sort(key=lambda t: float(t["quoteVolume"]), reverse=True)
+        bases = set()
+        for t in usdc[:top_n]:
+            base = t["symbol"].replace("USDC", "")
+            if re.match(r"^[A-Z0-9]+$", base):
+                bases.add(base)
+        return bases
+    except Exception as e:
+        print(f"  ⚠️  No se pudo consultar Binance API: {e}")
+        return set()
+
+
 def get_pairs_to_test(explicit: list[str] | None) -> list[str]:
-    """Determina qué pares probar."""
+    """Determina qué pares probar.
+
+    Sin --pairs explícitos: une pares con datos locales (máquina dev) y pares
+    del top-40 de Binance por volumen (servidor sin datos locales), filtrando
+    los que ya están en whitelist, blacklist o permanent_blacklist.
+    """
     if explicit:
         return [f"{p}/USDC" if "/" not in p else p for p in explicit]
 
-    # Pares con datos locales que no están en whitelist ni blacklist
+    current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()}
+    current_bl_bases = get_current_blacklist_bases()
+    excluded = current_wl_bases | current_bl_bases | PERMANENT_BLACKLIST
+
+    # Pares con datos locales (entorno dev)
     data_dir = ROOT / "user_data" / "data" / "binance"
     local_pairs = {
         f.stem.replace("_USDC-15m", "").replace("-15m", "")
         for f in data_dir.glob("*_USDC-15m.feather")
     }
 
-    current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()}
-    current_bl_bases = get_current_blacklist_bases()
-    perm_bl = PERMANENT_BLACKLIST
+    # Pares del top-40 Binance por volumen (descubrimiento dinámico en servidor)
+    binance_pairs = get_binance_usdc_pairs(top_n=40)
 
-    to_test = sorted(
-        local_pairs - current_wl_bases - current_bl_bases - perm_bl
-    )
-    return [f"{p}/USDC" for p in to_test]
+    candidates = sorted((local_pairs | binance_pairs) - excluded)
+    return [f"{p}/USDC" for p in candidates]
 
 
 def main():
