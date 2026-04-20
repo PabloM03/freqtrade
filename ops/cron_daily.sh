@@ -16,6 +16,11 @@ OPS="$BASE/ops"
 LOG_DIR="$OPS/logs"
 mkdir -p "$LOG_DIR"
 
+# Añadir conda al PATH (no está disponible en cron por defecto)
+for _conda_dir in /home/ubuntu/miniconda3/bin /home/ubuntu/anaconda3/bin /opt/conda/bin; do
+  [ -x "$_conda_dir/conda" ] && export PATH="$_conda_dir:$PATH" && break
+done
+
 # Usar Python del conda env freqtrade (tiene anthropic, tavily-python, requests)
 # Fallback a python3 del sistema si no existe el env
 CONDA_PYTHON="/home/ubuntu/miniconda3/envs/freqtrade/bin/python3"
