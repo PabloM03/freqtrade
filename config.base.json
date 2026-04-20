@@ -52,9 +52,16 @@
       "LDO/USDC",
       "NEAR/USDC",
       "OP/USDC",
-      "TON/USDC"
+      "TON/USDC",
+      "HBAR/USDC"
     ],
     "pair_blacklist": [
+      "ZRO/.*",
+      "BLUR/.*",
+      "ENJ/.*",
+      "ENA/.*",
+      "TAO/.*",
+      "AAVE/.*",
       "WLD/.*",
       "TIA/.*",
       "DYDX/.*",
