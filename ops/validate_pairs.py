@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import zipfile
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -220,7 +221,8 @@ def main():
     parser = argparse.ArgumentParser(description="Auto-validación de pares nuevos")
     parser.add_argument("--pairs", nargs="+", help="Pares a testear (sin /USDC)")
     parser.add_argument("--dry-run", action="store_true", help="Solo mostrar, no modificar configs")
-    parser.add_argument("--timerange", default="20240101-20251231", help="Rango de backtest")
+    default_timerange = f"20240101-{date.today().strftime('%Y%m%d')}"
+    parser.add_argument("--timerange", default=default_timerange, help="Rango de backtest")
     parser.add_argument("--no-download", action="store_true", help="No descargar datos (ya existen)")
     args = parser.parse_args()
 
@@ -299,14 +301,17 @@ def main():
             if stats["trades"] >= 3:  # solo blacklist si tuvimos suficientes datos
                 add_to_blacklist(pair)
 
-        # Commit y push
-        pairs_str = " ".join(p for p, _ in approved) or "solo rechazados"
-        os.chdir(ROOT)
+        # Commit y push solo si hay cambios reales en los configs
         subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
-        msg = f"feat: auto-validación pares — añadidos: {pairs_str}"
-        subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-        subprocess.run(["git", "push"], cwd=ROOT)
-        print("\n🚀 Cambios commiteados y pusheados.")
+        diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
+        if diff.returncode != 0:
+            pairs_str = " ".join(p for p, _ in approved) or "solo rechazados"
+            msg = f"feat: auto-validación pares — añadidos: {pairs_str}"
+            subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
+            subprocess.run(["git", "push"], cwd=ROOT)
+            print("\n🚀 Cambios commiteados y pusheados.")
+        else:
+            print("\nℹ️  Sin cambios en configs — nada que commitear.")
 
 
 if __name__ == "__main__":

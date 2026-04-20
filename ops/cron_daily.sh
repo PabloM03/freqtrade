@@ -26,6 +26,10 @@ python3 "$OPS/fetch_sentiment.py" && echo "[cron_daily] fetch_sentiment OK" || e
 echo "[cron_daily] step 2: analyze_news (Tavily+keywords o Claude AI)"
 python3 "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
 
+# 3. Auto-validación de pares nuevos del VolumePairList
+echo "[cron_daily] step 3: validate_pairs (descarga + backtest pares no validados)"
+python3 "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló (whitelist sin cambios)"
+
 echo "[cron_daily] $(date -u +'%F %T') UTC — fin"
 
 # Rotación simple de logs (mantener últimas 2 semanas)
