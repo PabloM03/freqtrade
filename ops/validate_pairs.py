@@ -20,7 +20,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import urllib.request
 import zipfile
 from datetime import date
@@ -44,6 +43,8 @@ PERMANENT_BLACKLIST = {
     # Testados y rechazados por backtest negativo
     "MEME", "NEIRO", "BOME", "SUI", "ORDI",
     "TIA", "WLD", "DOT", "DYDX",
+    # Excluidos por naturaleza (no son coins tradables para esta estrategia)
+    "U", "AUD", "EUR", "USD1", "FDUSD",
 }
 
 
@@ -83,7 +84,7 @@ def get_current_blacklist_bases() -> set[str]:
 def download_pair_data(pair_usdc: str, timerange: str):
     """Descarga datos históricos para un par."""
     print(f"  Descargando datos para {pair_usdc}...")
-    code, out, err = run([
+    code, _, err = run([
         "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
         "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST),
         "-c", str(ROOT / "config.secrets.json"),
@@ -107,7 +108,7 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     save_json(tmp_cfg, bt_cfg)
 
     try:
-        code, out, err = run([
+        code, *_ = run([
             "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
             "-c", str(CONFIG_BASE), "-c", str(tmp_cfg),
             "-c", str(ROOT / "config.secrets.json"),
