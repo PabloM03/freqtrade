@@ -47,6 +47,7 @@ PERMANENT_BLACKLIST = {
     # Testados y rechazados por backtest negativo
     "MEME", "NEIRO", "BOME", "SUI", "ORDI",
     "TIA", "WLD", "DOT", "DYDX",
+    "AAVE", "TAO", "ENA", "ENJ", "BLUR", "ZRO",
     # Excluidos por naturaleza (no son coins tradables para esta estrategia)
     "U", "AUD", "EUR", "USD1", "FDUSD",
 }
