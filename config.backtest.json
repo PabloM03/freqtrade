@@ -20,7 +20,8 @@
       "NEAR/USDC",
       "OP/USDC",
       "TON/USDC",
-      "HBAR/USDC"
+      "HBAR/USDC",
+      "SPK/USDC"
     ]
   }
 }
