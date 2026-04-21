@@ -21,7 +21,8 @@
       "OP/USDC",
       "TON/USDC",
       "HBAR/USDC",
-      "SPK/USDC"
+      "SPK/USDC",
+      "EIGEN/USDC"
     ]
   }
 }
