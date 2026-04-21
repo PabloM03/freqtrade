@@ -395,6 +395,19 @@ class MyStrategy(IStrategy):
         coin = metadata['pair'].split('/')[0]
         dataframe['ai_score'] = self._ai_scores.get(coin, 0.0)
 
+        # --- Régimen macro: proxy BTC — bloquea entradas si BTC cae >20% en 48h ---
+        # 192 barras de 15m = 48h. Solo crash extremos (Luna, FTX, macro bear), no correcciones normales.
+        try:
+            btc_df = self.dp.get_pair_dataframe('BTC/USDC', timeframe=self.timeframe)
+            if btc_df is not None and len(btc_df) > 200:
+                btc_48h_ret = btc_df['close'] / btc_df['close'].shift(192) - 1
+                btc_date_to_ret = dict(zip(btc_df['date'], btc_48h_ret))
+                dataframe['macro_ok'] = dataframe['date'].map(btc_date_to_ret).fillna(0) > -0.20
+            else:
+                dataframe['macro_ok'] = True
+        except Exception:
+            dataframe['macro_ok'] = True
+
         return dataframe
 
     # ---------------------- ENTRADAS (alta frecuencia, filtros relajados) ----------------------
@@ -592,12 +605,13 @@ class MyStrategy(IStrategy):
         # Calcular máscaras una sola vez para evitar el bug de re-evaluación
         # A, B, C, F usan base_filter_trough (sin anti_chase — loc_trough.shift(1)+recovery lo garantizan)
         # H, G, J usan base_filter_trend (anti_chase completo — sin trough anchor)
-        mask_A = A & base_filter_trough
-        mask_B = B & base_filter_trough & ~mask_A
-        mask_C = C & base_filter_trough & ~mask_A & ~mask_B
+        macro_ok = dataframe['macro_ok']
+        mask_A = A & base_filter_trough & macro_ok
+        mask_B = B & base_filter_trough & macro_ok & ~mask_A
+        mask_C = C & base_filter_trough & macro_ok & ~mask_A & ~mask_B
         mask_D = D & base_filter_D & ~mask_A & ~mask_B & ~mask_C
         mask_E = E & base_filter_E & ~mask_A & ~mask_B & ~mask_C & ~mask_D
-        mask_F = F & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
+        mask_F = F & base_filter_trough & macro_ok & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E
         mask_G = G & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F
         # H: Panic Entry — usa base_filter_trough (loc_trough.shift(1) + recovery, sin anti_chase como A/B/C)
         mask_H = H & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G
