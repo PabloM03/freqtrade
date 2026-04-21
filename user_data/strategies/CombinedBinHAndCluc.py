@@ -397,12 +397,17 @@ class MyStrategy(IStrategy):
 
         # --- Régimen macro: proxy BTC — bloquea entradas si BTC cae >20% en 48h ---
         # 192 barras de 15m = 48h. Solo crash extremos (Luna, FTX, macro bear), no correcciones normales.
+        # Sólo activo cuando BTC está disponible en el contexto (backtest full o live).
         try:
-            btc_df = self.dp.get_pair_dataframe('BTC/USDC', timeframe=self.timeframe)
-            if btc_df is not None and len(btc_df) > 200:
-                btc_48h_ret = btc_df['close'] / btc_df['close'].shift(192) - 1
-                btc_date_to_ret = dict(zip(btc_df['date'], btc_48h_ret))
-                dataframe['macro_ok'] = dataframe['date'].map(btc_date_to_ret).fillna(0) > -0.20
+            btc_available = ('BTC/USDC', self.timeframe) in self.dp.available_pairs
+            if btc_available:
+                btc_df = self.dp.get_pair_dataframe('BTC/USDC', timeframe=self.timeframe)
+                if btc_df is not None and len(btc_df) > 200:
+                    btc_48h_ret = btc_df['close'] / btc_df['close'].shift(192) - 1
+                    btc_date_to_ret = dict(zip(btc_df['date'], btc_48h_ret))
+                    dataframe['macro_ok'] = dataframe['date'].map(btc_date_to_ret).fillna(0) > -0.20
+                else:
+                    dataframe['macro_ok'] = True
             else:
                 dataframe['macro_ok'] = True
         except Exception:
