@@ -55,9 +55,12 @@
       "TON/USDC",
       "HBAR/USDC",
       "SPK/USDC",
-      "EIGEN/USDC"
+      "EIGEN/USDC",
+      "RENDER/USDC"
     ],
     "pair_blacklist": [
+      "INJ/.*",
+      "ARB/.*",
       "GUN/.*",
       "ZRO/.*",
       "BLUR/.*",

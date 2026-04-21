@@ -22,7 +22,8 @@
       "TON/USDC",
       "HBAR/USDC",
       "SPK/USDC",
-      "EIGEN/USDC"
+      "EIGEN/USDC",
+      "RENDER/USDC"
     ]
   }
 }
