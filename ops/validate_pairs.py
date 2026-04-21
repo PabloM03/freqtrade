@@ -106,9 +106,12 @@ def download_pair_data(pair_usdc: str, timerange: str):
 
 def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     """Ejecuta backtest de un par solo y devuelve sus stats."""
-    # Config temporal con solo este par
+    # Config temporal: par objetivo + BTC (necesario para macro_ok filter de la estrategia)
     bt_cfg = load_json(CONFIG_BACKTEST)
-    bt_cfg["exchange"]["pair_whitelist"] = [pair_usdc]
+    pairs = [pair_usdc]
+    if pair_usdc != "BTC/USDC":
+        pairs.append("BTC/USDC")
+    bt_cfg["exchange"]["pair_whitelist"] = pairs
     tmp_cfg = ROOT / "config.backtest.tmp.json"
     save_json(tmp_cfg, bt_cfg)
 
