@@ -762,6 +762,20 @@ class MyStrategy(IStrategy):
                 multiplier = 1.0   # neutral
 
             adjusted = proposed_stake * multiplier
+
+            # Multiplicador adicional por WR histórica del par
+            _PAIR_WR_MULT = {
+                'BONK/USDC': 1.25,   # 100% WR, 8+ trades
+                'TURBO/USDC': 1.25,  # 100% WR
+                'ACT/USDC': 1.20,    # 100% WR
+                'HBAR/USDC': 1.20,   # 100% WR
+                'FET/USDC': 1.10,    # 82% WR, 11T
+                'WIF/USDC': 1.10,    # 92% WR
+                'JTO/USDC': 0.85,    # 75% WR, borderline
+                'SPK/USDC': 0.85,    # 75% WR, 4T solo
+            }
+            adjusted = adjusted * _PAIR_WR_MULT.get(pair, 1.0)
+
             if min_stake is not None:
                 adjusted = max(adjusted, min_stake)
             return min(adjusted, max_stake)
@@ -817,6 +831,20 @@ class MyStrategy(IStrategy):
         # TP duro
         if current_profit is not None and current_profit >= self.HARD_TP:
             return "hard_tp"
+
+        # Corte por tiempo: >3% pérdida, >48h abierto, momentum agotado (MACD 2 barras bajando + RSI cayendo)
+        if current_profit is not None and current_profit < -0.03 and bars >= 192:
+            try:
+                df_loss = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
+                last_l  = df_loss.iloc[-1]
+                prev_l  = df_loss.iloc[-2]
+                prev2_l = df_loss.iloc[-3]
+                if (last_l['macdhist'] < prev_l['macdhist'] and
+                        prev_l['macdhist'] < prev2_l['macdhist'] and
+                        float(last_l['rsi']) < float(last_l['rsi_prev'])):
+                    return "loss_stagnant_exit"
+            except Exception:
+                pass
 
         # Requiere beneficio neto
         if current_profit is None or current_profit < self.MIN_PROFIT_NET:
@@ -961,6 +989,10 @@ class MyStrategy(IStrategy):
         **kwargs
     ) -> float:
         p = current_profit if current_profit is not None else 0.0
+
+        # Guard: si ya estamos en pérdida mayor que el SL floor, forzar salida inmediata
+        if p <= STOPLOSS_ABS:
+            return -0.001
 
         # Large-caps (BTC, SOL, LINK) tienen movimientos más pequeños: trail más ajustado.
         # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
