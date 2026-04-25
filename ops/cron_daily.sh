@@ -37,9 +37,10 @@ echo "[cron_daily] step 1: fetch_sentiment (Fear&Greed + trending + noticias)"
 echo "[cron_daily] step 2: analyze_news (Tavily+keywords o Claude AI)"
 "$PYTHON" "$OPS/analyze_news.py" && echo "[cron_daily] analyze_news OK" || echo "[cron_daily] WARN: analyze_news falló (usará señal neutral)"
 
-# 3. Auto-validación de pares nuevos del VolumePairList
-echo "[cron_daily] step 3: validate_pairs (descarga + backtest pares no validados)"
-"$PYTHON" "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló (whitelist sin cambios)"
+# 3. Gestión automática de pares — sobreescribe la whitelist diariamente con los mejores pares.
+# La blacklist es SOLO MANUAL — este script nunca la toca.
+echo "[cron_daily] step 3: validate_pairs"
+"$PYTHON" "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló"
 
 echo "[cron_daily] $(date -u +'%F %T') UTC — fin"
 
