@@ -5,8 +5,9 @@ After=network.target
 [Service]
 WorkingDirectory=/home/ubuntu/freqtrade
 ExecStart=/home/ubuntu/miniconda3/bin/conda run -n freqtrade --no-capture-output bash /home/ubuntu/freqtrade/ops/trade.sh
-Restart=on-failure
-RestartSec=10
+Restart=always
+RestartSec=30
+OOMScoreAdjust=-800
 
 [Install]
 WantedBy=multi-user.target

@@ -461,7 +461,7 @@ class MyStrategy(IStrategy):
         # cuando la recuperación no ha alejado el precio de la zona de valor.
         bb_deep_zone = (dataframe['bb_percent'] <= 0.30)  # HOY sigue en zona oversold
         A = (
-            dataframe['loc_trough'].shift(1).fillna(False) &            # trough AYER (6h low)
+            dataframe['loc_trough'].shift(1).fillna(False).astype(bool) &            # trough AYER (6h low)
             (dataframe['low'].shift(1) <= dataframe['ll_10'].shift(1) * self.A_LL10_MULT) &  # ayer en 10-bar low
             bb_deep_zone &                                              # HOY precio aún en zona baja (≤30%)
             (dataframe['rsi_prev'] < self.buy_a_rsi_prev_max.value) &   # RSI fue oversold ayer (rsi_prev < 38)
@@ -477,7 +477,7 @@ class MyStrategy(IStrategy):
         # Dispara cuando: (1) ayer fue trough 6h Y estaba muy profundo en BB (bb_percent≤0.10),
         # (2) hoy rebotó ≥0.8%, verde, vol, RSI girando. Captura fondos en sell-off técnico fuerte.
         B = (
-            dataframe['loc_trough'].shift(1).fillna(False) &          # trough AYER (6h low)
+            dataframe['loc_trough'].shift(1).fillna(False).astype(bool) &          # trough AYER (6h low)
             (dataframe['bb_percent'].shift(1) <= 0.10) &              # ayer muy profundo en BB (cerca/bajo banda inferior)
             (dataframe['close'] >= dataframe['low'].shift(1) * 1.008) &  # ≥0.8% rebote desde trough
             (dataframe['rsi'] > dataframe['rsi_prev']) &               # RSI girando al alza
@@ -495,7 +495,7 @@ class MyStrategy(IStrategy):
         #   En correcciones de bull market, EMA200 sigue plana/alcista → permite las entradas.
         # bb_zone_ok (≤ 0.68) permissivo: los ganadores de C son precisamente los que rebotaron fuerte.
         C = (
-            dataframe['loc_trough'].shift(1).fillna(False) &             # trough AYER (6h low)
+            dataframe['loc_trough'].shift(1).fillna(False).astype(bool) &             # trough AYER (6h low)
             (dataframe['stoch_k_prev'] < dataframe['stoch_d_prev']) &    # AYER: K bajo D (bearish oversold)
             (dataframe['stoch_k_prev'] < self.buy_c_stoch_max.value) &   # AYER: K < 36 (zona oversold)
             (dataframe['stoch_d_prev'] < self.buy_c_stoch_max.value) &   # AYER: D < 36
@@ -523,7 +523,7 @@ class MyStrategy(IStrategy):
         # Gate de noticias: no entrar en F si noticias son bajistas para este coin.
         news_not_bearish = (dataframe['ai_score'] > -0.25)
         F = (
-            dataframe['loc_trough'].shift(1).fillna(False) &            # trough AYER (6h low)
+            dataframe['loc_trough'].shift(1).fillna(False).astype(bool) &            # trough AYER (6h low)
             (dataframe['rsi_prev'] < self.buy_f_rsi_max.value) &         # RSI extremo en el trough
             (dataframe['close'] >= dataframe['low'].shift(1) * 1.012) &  # ≥1.2% rebote (más exigente)
             (dataframe['rsi'] > dataframe['rsi_prev']) &                 # RSI subiendo hoy
