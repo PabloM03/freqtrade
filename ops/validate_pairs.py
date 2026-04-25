@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
 """
-Auto-validación de pares: descarga datos, testea con params actuales,
-actualiza whitelist/blacklist en config.base.json y config.backtest.json.
+Gestión automática de la whitelist: cada ejecución reconstruye la whitelist
+desde cero con todos los pares que cumplen criterios de rendimiento.
 
-Uso:
-  python ops/validate_pairs.py                      # valida pares del VolumePairList vs whitelist actual
-  python ops/validate_pairs.py --pairs DYDX TIA LDO # valida pares específicos
-  python ops/validate_pairs.py --dry-run             # solo muestra resultados sin modificar configs
-  python ops/validate_pairs.py --timerange 20240101-20251231  # rango custom
+Diseño:
+  - La whitelist se SOBREESCRIBE cada día con los mejores pares del momento.
+  - La blacklist en config.base.json es SOLO MANUAL — este script nunca la toca.
+  - BTC/USDC siempre se incluye (referencia para el filtro macro_ok).
+
+Flujo:
+  1. Candidatos = top-40 Binance por volumen + pares de whitelist actual
+     (excluyendo NEVER_INCLUDE y la blacklist manual)
+  2. Para cada candidato: descarga datos si no existen, corre backtest
+  3. Nueva whitelist = BTC + todos los que pasan criterios (≥3T, WR≥70%...)
+  4. Sobreescribe whitelist en config.base.json y config.backtest.json
+  5. Commit + push si hubo cambios
 
 Criterios de aprobación:
-  - WR >= 70% (al menos 7 de cada 10 trades ganadores)
-  - Profit total > 0 (positivo)
-  - Trades >= 3 (mínimo estadístico)
-  - Avg profit > 0.5% por trade
+  WR >= 70%, Trades >= 3, Avg profit > 0.5%, Total profit > 0
+
+Uso:
+  python ops/validate_pairs.py                # reconstruye whitelist completa
+  python ops/validate_pairs.py --dry-run      # preview sin modificar nada
+  python ops/validate_pairs.py --no-download  # no descarga datos nuevos
+  python ops/validate_pairs.py --pairs BTC BONK WIF  # evalúa solo estos
 """
 import argparse
 import json
@@ -33,23 +43,20 @@ CONFIG_SECRETS = next(
     ROOT / "config.secrets.json",
 )
 
-# Criterios de aprobación
-MIN_WR = 0.70        # 70% win rate mínimo
-MIN_TRADES = 3       # mínimo 3 trades para ser estadísticamente relevante
-MIN_AVG_PROFIT = 0.5 # 0.5% avg profit por trade
-MIN_TOTAL_PROFIT = 0  # profit total positivo
+MIN_WR = 0.70
+MIN_TRADES = 3
+MIN_AVG_PROFIT = 0.5
+MIN_TOTAL_PROFIT = 0
 
-# Pares que nunca deben añadirse (blacklist fija — probados y fallidos o riesgosos)
-PERMANENT_BLACKLIST = {
-    # Siempre excluidos (grandes caps que no encajan en estrategia reversal)
-    "SOL", "PEPE", "SHIB", "DOGE", "ETH", "ADA", "XRP", "LTC", "AVAX",
+# Nunca se incluyen — ni aunque pasen backtest. No se tocan por script.
+NEVER_INCLUDE = {
+    "SOL", "PEPE", "SHIB", "DOGE", "ADA", "XRP", "LTC", "AVAX",
     "FLOKI", "BNB", "WBTC", "WETH",
-    # Testados y rechazados por backtest negativo
     "MEME", "NEIRO", "BOME", "SUI", "ORDI",
-    "TIA", "WLD", "DOT", "DYDX",
-    "AAVE", "TAO", "ENA", "ENJ", "BLUR", "ZRO",
-    # Excluidos por naturaleza (no son coins tradables para esta estrategia)
+    "TIA", "WLD", "DOT",
+    "AAVE", "TAO", "ENJ", "BLUR", "ZRO",
     "U", "AUD", "EUR", "USD1", "FDUSD",
+    "GUN",
 }
 
 
@@ -70,216 +77,26 @@ def save_json(path: Path, data: dict):
 
 
 def get_current_whitelist() -> list[str]:
-    cfg = load_json(CONFIG_BASE)
-    return cfg["exchange"]["pair_whitelist"]
+    return load_json(CONFIG_BASE)["exchange"]["pair_whitelist"]
 
 
-def get_current_blacklist_bases() -> set[str]:
-    """Extrae los nombres base de los pares en la blacklist (ej: 'SOL' de 'SOL/.*')"""
-    cfg = load_json(CONFIG_BASE)
+def get_manual_blacklist_bases() -> set[str]:
+    """Lee la blacklist manual del config — este script nunca la modifica."""
     bases = set()
-    for pattern in cfg["exchange"]["pair_blacklist"]:
-        # extrae el nombre base antes de /
+    for pattern in load_json(CONFIG_BASE)["exchange"]["pair_blacklist"]:
         m = re.match(r"^([A-Z0-9]+)/", pattern)
         if m:
             bases.add(m.group(1))
     return bases
 
 
-def download_pair_data(pair_usdc: str, timerange: str):
-    """Descarga datos históricos para un par."""
-    print(f"  Descargando datos para {pair_usdc}...")
-    code, _, err = run([
-        "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
-        "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST),
-        "-c", str(CONFIG_SECRETS),
-        "--pairs", pair_usdc,
-        "--timeframes", "15m",
-        "--timerange", timerange,
-        "--prepend"
-    ], timeout=180)
-    if code != 0:
-        print(f"  ⚠️  Error descargando {pair_usdc}: {err[-200:]}")
-        return False
-    return True
-
-
-def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
-    """Ejecuta backtest de un par solo y devuelve sus stats."""
-    # Config temporal: par objetivo + BTC (necesario para macro_ok filter de la estrategia)
-    bt_cfg = load_json(CONFIG_BACKTEST)
-    pairs = [pair_usdc]
-    if pair_usdc != "BTC/USDC":
-        pairs.append("BTC/USDC")
-    bt_cfg["exchange"]["pair_whitelist"] = pairs
-    tmp_cfg = ROOT / "config.backtest.tmp.json"
-    save_json(tmp_cfg, bt_cfg)
-
-    try:
-        code, *_ = run([
-            "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
-            "-c", str(CONFIG_BASE), "-c", str(tmp_cfg),
-            "-c", str(CONFIG_SECRETS),
-            "-s", "MyStrategy",
-            "--timerange", timerange,
-            "--cache", "none"
-        ], timeout=300)
-
-        if code != 0:
-            print(f"  ⚠️  Backtest falló para {pair_usdc}")
-            return None
-
-        # Encontrar el zip más reciente
-        results_dir = ROOT / "user_data" / "backtest_results"
-        zips = sorted(results_dir.glob("*.zip"), key=os.path.getmtime, reverse=True)
-        if not zips:
-            return None
-
-        with zipfile.ZipFile(zips[0]) as z:
-            json_files = [n for n in z.namelist() if n.endswith(".json") and "meta" not in n and "config" not in n and "MyStrategy" not in n]
-            if not json_files:
-                return None
-            with z.open(json_files[0]) as fh:
-                data = json.load(fh)
-
-        strat = data.get("strategy", {}).get("MyStrategy", {})
-        if not strat:
-            return None
-
-        trades = strat.get("trades", [])
-        pair_trades = [t for t in trades if t.get("pair") == pair_usdc]
-
-        if not pair_trades:
-            return {"pair": pair_usdc, "trades": 0, "wr": 0, "avg_profit": 0, "total_profit": 0}
-
-        wins = sum(1 for t in pair_trades if t["profit_ratio"] > 0)
-        wr = wins / len(pair_trades)
-        avg_profit = sum(t["profit_ratio"] for t in pair_trades) / len(pair_trades) * 100
-        total_profit = sum(t["profit_abs"] for t in pair_trades)
-
-        return {
-            "pair": pair_usdc,
-            "trades": len(pair_trades),
-            "wr": wr,
-            "avg_profit": avg_profit,
-            "total_profit": total_profit,
-        }
-
-    finally:
-        tmp_cfg.unlink(missing_ok=True)
-
-
-def evaluate(stats: dict) -> tuple[bool, str]:
-    """Decide si el par pasa la validación. Retorna (aprobado, razón)."""
-    if stats["trades"] == 0:
-        return False, "0 trades en el período"
-    if stats["trades"] < MIN_TRADES:
-        return False, f"solo {stats['trades']} trades (mínimo {MIN_TRADES})"
-    if stats["wr"] < MIN_WR:
-        return False, f"WR {stats['wr']*100:.1f}% < {MIN_WR*100:.0f}%"
-    if stats["total_profit"] <= MIN_TOTAL_PROFIT:
-        return False, f"profit total ${stats['total_profit']:.2f} ≤ 0"
-    if stats["avg_profit"] < MIN_AVG_PROFIT:
-        return False, f"avg profit {stats['avg_profit']:.2f}% < {MIN_AVG_PROFIT}%"
-    return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
-
-
-def add_to_whitelist(pair_usdc: str):
-    """Añade un par a la whitelist de config.base.json y config.backtest.json."""
-    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
-        cfg = load_json(cfg_path)
-        wl = cfg["exchange"]["pair_whitelist"]
-        if pair_usdc not in wl:
-            wl.append(pair_usdc)
-            save_json(cfg_path, cfg)
-            print(f"  ✅ Añadido a {cfg_path.name}")
-
-
-def add_to_blacklist(pair_usdc: str):
-    """Añade un par a la blacklist de config.base.json."""
-    base = pair_usdc.split("/")[0]
-    pattern = f"{base}/.*"
-    cfg = load_json(CONFIG_BASE)
-    bl = cfg["exchange"]["pair_blacklist"]
-    if pattern not in bl:
-        bl.insert(0, pattern)
-        save_json(CONFIG_BASE, cfg)
-        print(f"  🚫 Blacklisteado en config.base.json: {pattern}")
-
-
-def remove_from_whitelist(pair_usdc: str):
-    """Elimina un par de la whitelist en config.base.json y config.backtest.json."""
-    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
-        cfg = load_json(cfg_path)
-        wl = cfg["exchange"]["pair_whitelist"]
-        if pair_usdc in wl:
-            wl.remove(pair_usdc)
-            save_json(cfg_path, cfg)
-            print(f"  🗑️  Eliminado de {cfg_path.name}")
-
-
-def revalidate_whitelist(timerange: str) -> tuple[list, list]:
-    """Re-valida los pares actuales de la whitelist con datos recientes.
-
-    Solo elimina si hay ≥3 trades Y falla criterios — si hay 0 trades (mercado
-    quieto) el par se mantiene: ausencia de señal no es evidencia de fallo.
-    BTC nunca se elimina (referencia necesaria para macro_ok filter).
-    """
-    current_wl = get_current_whitelist()
-    demoted = []   # pares eliminados de whitelist
-    kept = []      # pares que siguen bien
-
-    if not current_wl:
-        return demoted, kept
-
-    print(f"\n{'='*60}")
-    print("🔄 RE-VALIDANDO PARES EXISTENTES EN WHITELIST")
-    print(f"   Rango: {timerange}")
-    print(f"{'='*60}\n")
-
-    for pair in current_wl:
-        base = pair.split("/")[0]
-
-        if base == "BTC":
-            print(f"  ⏭️  {pair} — siempre mantenido (referencia macro)")
-            kept.append(pair)
-            continue
-
-        print(f"📊 Re-validando {pair}...")
-        stats = run_backtest_single(pair, timerange)
-
-        if stats is None:
-            print(f"  ⚠️  Backtest falló — mantenido por precaución")
-            kept.append(pair)
-            continue
-
-        if stats["trades"] < MIN_TRADES:
-            print(f"  ⏭️  Solo {stats['trades']} trades en el período — sin datos suficientes, se mantiene")
-            kept.append(pair)
-            continue
-
-        passed, reason = evaluate(stats)
-        if passed:
-            print(f"  ✅ Sigue bien: {reason}")
-            kept.append(pair)
-        else:
-            print(f"  ❌ DEGRADADO: {reason} → se elimina de whitelist")
-            demoted.append((pair, stats, reason))
-
-    return demoted, kept
-
-
-def get_binance_usdc_pairs(top_n: int = 40) -> set[str]:
-    """Consulta Binance REST API y devuelve los top N pares USDC por volumen 24h."""
+def get_binance_usdc_top(top_n: int = 40) -> set[str]:
     try:
         url = "https://api.binance.com/api/v3/ticker/24hr"
         req = urllib.request.Request(url, headers={"User-Agent": "freqtrade-validator/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             tickers = json.loads(resp.read())
-        usdc = [
-            t for t in tickers
-            if t["symbol"].endswith("USDC") and not t["symbol"].endswith("BUSDC")
-        ]
+        usdc = [t for t in tickers if t["symbol"].endswith("USDC") and not t["symbol"].endswith("BUSDC")]
         usdc.sort(key=lambda t: float(t["quoteVolume"]), reverse=True)
         bases = set()
         for t in usdc[:top_n]:
@@ -288,159 +105,209 @@ def get_binance_usdc_pairs(top_n: int = 40) -> set[str]:
                 bases.add(base)
         return bases
     except Exception as e:
-        print(f"  ⚠️  No se pudo consultar Binance API: {e}")
+        print(f"  ⚠️  Binance API no disponible: {e}")
         return set()
 
 
-def get_pairs_to_test(explicit: list[str] | None) -> list[str]:
-    """Determina qué pares probar.
+def download_pair_data(pair_usdc: str, timerange: str) -> bool:
+    print(f"  Descargando datos para {pair_usdc}...")
+    code, _, err = run([
+        "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
+        "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST), "-c", str(CONFIG_SECRETS),
+        "--pairs", pair_usdc, "--timeframes", "15m", "--timerange", timerange, "--prepend",
+    ], timeout=180)
+    if code != 0:
+        print(f"  ⚠️  Error descargando: {err[-200:]}")
+        return False
+    return True
 
-    Sin --pairs explícitos: une pares con datos locales (máquina dev) y pares
-    del top-40 de Binance por volumen (servidor sin datos locales), filtrando
-    los que ya están en whitelist, blacklist o permanent_blacklist.
-    """
-    if explicit:
-        return [f"{p}/USDC" if "/" not in p else p for p in explicit]
 
-    current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()}
-    current_bl_bases = get_current_blacklist_bases()
-    excluded = current_wl_bases | current_bl_bases | PERMANENT_BLACKLIST
+def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
+    bt_cfg = load_json(CONFIG_BACKTEST)
+    pairs = [pair_usdc]
+    if pair_usdc != "BTC/USDC":
+        pairs.append("BTC/USDC")
+    bt_cfg["exchange"]["pair_whitelist"] = pairs
+    tmp_cfg = ROOT / "config.backtest.tmp.json"
+    save_json(tmp_cfg, bt_cfg)
+    try:
+        code, *_ = run([
+            "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
+            "-c", str(CONFIG_BASE), "-c", str(tmp_cfg), "-c", str(CONFIG_SECRETS),
+            "-s", "MyStrategy", "--timerange", timerange, "--cache", "none",
+        ], timeout=300)
+        if code != 0:
+            return None
+        results_dir = ROOT / "user_data" / "backtest_results"
+        zips = sorted(results_dir.glob("*.zip"), key=os.path.getmtime, reverse=True)
+        if not zips:
+            return None
+        with zipfile.ZipFile(zips[0]) as z:
+            json_files = [n for n in z.namelist()
+                          if n.endswith(".json") and "meta" not in n
+                          and "config" not in n and "MyStrategy" not in n]
+            if not json_files:
+                return None
+            with z.open(json_files[0]) as fh:
+                data = json.load(fh)
+        strat = data.get("strategy", {}).get("MyStrategy", {})
+        if not strat:
+            return None
+        trades = strat.get("trades", [])
+        pair_trades = [t for t in trades if t.get("pair") == pair_usdc]
+        if not pair_trades:
+            return {"pair": pair_usdc, "trades": 0, "wr": 0, "avg_profit": 0, "total_profit": 0}
+        wins = sum(1 for t in pair_trades if t["profit_ratio"] > 0)
+        wr = wins / len(pair_trades)
+        avg_profit = sum(t["profit_ratio"] for t in pair_trades) / len(pair_trades) * 100
+        total_profit = sum(t["profit_abs"] for t in pair_trades)
+        return {"pair": pair_usdc, "trades": len(pair_trades), "wr": wr,
+                "avg_profit": avg_profit, "total_profit": total_profit}
+    finally:
+        tmp_cfg.unlink(missing_ok=True)
 
-    # Pares con datos locales (entorno dev)
-    data_dir = ROOT / "user_data" / "data" / "binance"
-    local_pairs = {
-        f.stem.replace("_USDC-15m", "").replace("-15m", "")
-        for f in data_dir.glob("*_USDC-15m.feather")
-    }
 
-    # Pares del top-40 Binance por volumen (descubrimiento dinámico en servidor)
-    binance_pairs = get_binance_usdc_pairs(top_n=40)
+def evaluate(stats: dict) -> tuple[bool, str]:
+    if stats["trades"] == 0:
+        return False, "0 trades"
+    if stats["trades"] < MIN_TRADES:
+        return False, f"solo {stats['trades']} trades"
+    if stats["wr"] < MIN_WR:
+        return False, f"WR {stats['wr']*100:.1f}%"
+    if stats["total_profit"] <= MIN_TOTAL_PROFIT:
+        return False, f"profit ${stats['total_profit']:.2f} ≤ 0"
+    if stats["avg_profit"] < MIN_AVG_PROFIT:
+        return False, f"avg {stats['avg_profit']:.2f}%"
+    return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
 
-    candidates = sorted((local_pairs | binance_pairs) - excluded)
-    return [f"{p}/USDC" for p in candidates]
+
+def overwrite_whitelist(new_whitelist: list[str]):
+    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
+        cfg = load_json(cfg_path)
+        cfg["exchange"]["pair_whitelist"] = new_whitelist
+        save_json(cfg_path, cfg)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-validación de pares nuevos + re-validación whitelist")
-    parser.add_argument("--pairs", nargs="+", help="Pares a testear (sin /USDC)")
-    parser.add_argument("--dry-run", action="store_true", help="Solo mostrar, no modificar configs")
-    parser.add_argument("--skip-revalidation", action="store_true", help="No re-validar pares existentes")
+    parser = argparse.ArgumentParser(description="Reconstruye la whitelist con los pares que funcionan hoy")
+    parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USDC) — no sobreescribe")
+    parser.add_argument("--dry-run", action="store_true", help="Muestra resultado sin modificar configs")
+    parser.add_argument("--no-download", action="store_true", help="No descarga datos nuevos")
     default_timerange = f"20240101-{date.today().strftime('%Y%m%d')}"
-    parser.add_argument("--timerange", default=default_timerange, help="Rango de backtest")
-    parser.add_argument("--no-download", action="store_true", help="No descargar datos (ya existen)")
+    parser.add_argument("--timerange", default=default_timerange)
     args = parser.parse_args()
 
     print("=" * 60)
-    print("🔍 VALIDACIÓN AUTOMÁTICA DE PARES")
+    print("🔄 RECONSTRUCCIÓN AUTOMÁTICA DE WHITELIST")
+    print(f"   Rango: {args.timerange}")
     print("=" * 60)
 
-    # --- FASE 1: re-validar pares existentes en whitelist ---
-    demoted = []
-    if not args.skip_revalidation and not args.pairs:
-        demoted, _ = revalidate_whitelist(args.timerange)
+    manual_bl = get_manual_blacklist_bases()
+    excluded = NEVER_INCLUDE | manual_bl | {"BTC"}  # BTC se añade siempre al final
 
-    # --- FASE 2: descubrir y validar pares nuevos ---
-    pairs = get_pairs_to_test(args.pairs)
-    if not pairs:
-        print("\nNo hay pares nuevos que validar.")
-        if not demoted:
-            return
+    if args.pairs:
+        # Modo evaluación manual — no sobreescribe, solo informa
+        candidates = [c.upper() for c in args.pairs if c.upper() not in excluded]
+    else:
+        current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()} - excluded
+        binance_top = get_binance_usdc_top(40) - excluded
+        candidates = sorted(current_wl_bases | binance_top)
 
-    if pairs:
-        print(f"\nPares nuevos a validar: {len(pairs)}")
-        for p in pairs:
-            print(f"  - {p}")
+    print(f"\nCandidatos a evaluar: {len(candidates)}")
 
-    approved = []
-    rejected = []
+    approved = []  # (pair, stats)
+    rejected = []  # (pair, stats, reason)
+    no_data  = []  # pair
 
-    for pair in (pairs or []):
-        base = pair.split("/")[0]
+    for coin in candidates:
+        pair = f"{coin}/USDC"
+        feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
         print(f"\n{'─'*50}")
-        print(f"📊 Validando {pair}...")
+        print(f"📊 {pair}")
 
-        if base in PERMANENT_BLACKLIST:
-            print(f"  ⏭️  Saltado — en blacklist permanente")
-            continue
+        if not feather.exists():
+            if args.no_download:
+                print(f"  ⏭️  Sin datos locales — saltado (--no-download)")
+                no_data.append(pair)
+                continue
+            if not download_pair_data(pair, args.timerange):
+                print(f"  ❌ No se pudieron descargar datos")
+                no_data.append(pair)
+                continue
 
-        # Descargar datos si necesario
-        if not args.no_download:
-            feather = ROOT / "user_data" / "data" / "binance" / f"{base}_USDC-15m.feather"
-            if not feather.exists():
-                ok = download_pair_data(pair, args.timerange)
-                if not ok:
-                    print(f"  ❌ No se pudieron descargar datos")
-                    continue
-
-        # Backtest
         stats = run_backtest_single(pair, args.timerange)
         if stats is None:
             print(f"  ❌ Backtest falló")
+            no_data.append(pair)
             continue
 
         passed, reason = evaluate(stats)
         if passed:
-            print(f"  ✅ APROBADO: {reason}")
+            print(f"  ✅ PASA: {reason}")
             approved.append((pair, stats))
         else:
-            print(f"  ❌ RECHAZADO: {reason}")
-            rejected.append((pair, stats, reason))
+            if stats["trades"] < MIN_TRADES:
+                print(f"  ⏭️  {reason} — sin datos suficientes, ignorado")
+                no_data.append(pair)
+            else:
+                print(f"  ❌ NO PASA: {reason}")
+                rejected.append((pair, stats, reason))
+
+    # Construir nueva whitelist: BTC siempre primero, luego aprobados por profit desc
+    new_whitelist = ["BTC/USDC"] + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
 
     # Resumen
     print(f"\n{'='*60}")
-    print("📋 RESUMEN FINAL")
+    print("📋 RESULTADO")
     print(f"{'='*60}")
-
-    if demoted:
-        print(f"\n🔻 DEGRADADOS — eliminados de whitelist ({len(demoted)}):")
-        for pair, stats, reason in demoted:
-            print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
-    else:
-        print(f"\n✅ Todos los pares existentes siguen cumpliendo criterios")
-
-    if approved:
-        print(f"\n✅ NUEVOS APROBADOS ({len(approved)}):")
+    print(f"\n✅ Nueva whitelist ({len(new_whitelist)} pares):")
+    for p in new_whitelist:
+        stats_str = ""
         for pair, stats in approved:
-            print(f"  {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} ({stats['avg_profit']:.2f}% avg)")
+            if pair == p:
+                stats_str = f"  {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+        print(f"  {p}{stats_str}")
 
     if rejected:
-        print(f"\n❌ NUEVOS RECHAZADOS ({len(rejected)}):")
+        print(f"\n❌ Excluidos por rendimiento ({len(rejected)}):")
         for pair, stats, reason in rejected:
             print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
 
-    if args.dry_run:
-        print("\n⚠️  DRY RUN — no se modifica ningún config")
+    if no_data:
+        print(f"\n⏭️  Sin datos suficientes ({len(no_data)}): {', '.join(no_data)}")
+
+    if args.dry_run or args.pairs:
+        print("\n⚠️  DRY RUN / modo --pairs — no se modifica ningún config")
         return
 
-    # Aplicar cambios
-    if approved or rejected or demoted:
-        print(f"\n🔧 Actualizando configs...")
-        for pair, _ in approved:
-            add_to_whitelist(pair)
-        for pair, stats, _ in rejected:
-            if stats["trades"] >= 3:
-                add_to_blacklist(pair)
-        for pair, stats, _ in demoted:
-            remove_from_whitelist(pair)
-            add_to_blacklist(pair)
+    # Comparar con whitelist actual
+    current_wl = get_current_whitelist()
+    if set(new_whitelist) == set(current_wl):
+        print("\nℹ️  Whitelist sin cambios — nada que commitear.")
+        return
 
-        # Commit y push solo si hay cambios reales
-        subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
-        diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
-        if diff.returncode != 0:
-            added_str = " ".join(p for p, _ in approved)
-            removed_str = " ".join(p for p, _, _ in demoted)
-            parts = []
-            if added_str:
-                parts.append(f"añadidos: {added_str}")
-            if removed_str:
-                parts.append(f"eliminados: {removed_str}")
-            msg = f"feat: auto-validación pares — {', '.join(parts)}"
-            subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-            subprocess.run(["git", "push"], cwd=ROOT)
-            print("\n🚀 Cambios commiteados y pusheados.")
-        else:
-            print("\nℹ️  Sin cambios en configs — nada que commitear.")
+    added   = set(new_whitelist) - set(current_wl)
+    removed = set(current_wl) - set(new_whitelist)
+    print(f"\n🔧 Sobreescribiendo whitelist...")
+    if added:
+        print(f"  + Añadidos: {', '.join(sorted(added))}")
+    if removed:
+        print(f"  - Eliminados: {', '.join(sorted(removed))}")
+
+    overwrite_whitelist(new_whitelist)
+
+    subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
+    diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
+    if diff.returncode != 0:
+        parts = []
+        if added:
+            parts.append(f"+{' '.join(sorted(added))}")
+        if removed:
+            parts.append(f"-{' '.join(sorted(removed))}")
+        msg = f"feat: whitelist actualizada — {', '.join(parts)}"
+        subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
+        subprocess.run(["git", "push"], cwd=ROOT)
+        print("\n🚀 Cambios commiteados y pusheados → deploy automático.")
 
 
 if __name__ == "__main__":
