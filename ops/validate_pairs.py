@@ -202,10 +202,71 @@ def add_to_blacklist(pair_usdc: str):
     cfg = load_json(CONFIG_BASE)
     bl = cfg["exchange"]["pair_blacklist"]
     if pattern not in bl:
-        # Insertar al principio para que sea visible
         bl.insert(0, pattern)
         save_json(CONFIG_BASE, cfg)
         print(f"  🚫 Blacklisteado en config.base.json: {pattern}")
+
+
+def remove_from_whitelist(pair_usdc: str):
+    """Elimina un par de la whitelist en config.base.json y config.backtest.json."""
+    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
+        cfg = load_json(cfg_path)
+        wl = cfg["exchange"]["pair_whitelist"]
+        if pair_usdc in wl:
+            wl.remove(pair_usdc)
+            save_json(cfg_path, cfg)
+            print(f"  🗑️  Eliminado de {cfg_path.name}")
+
+
+def revalidate_whitelist(timerange: str) -> tuple[list, list]:
+    """Re-valida los pares actuales de la whitelist con datos recientes.
+
+    Solo elimina si hay ≥3 trades Y falla criterios — si hay 0 trades (mercado
+    quieto) el par se mantiene: ausencia de señal no es evidencia de fallo.
+    BTC nunca se elimina (referencia necesaria para macro_ok filter).
+    """
+    current_wl = get_current_whitelist()
+    demoted = []   # pares eliminados de whitelist
+    kept = []      # pares que siguen bien
+
+    if not current_wl:
+        return demoted, kept
+
+    print(f"\n{'='*60}")
+    print("🔄 RE-VALIDANDO PARES EXISTENTES EN WHITELIST")
+    print(f"   Rango: {timerange}")
+    print(f"{'='*60}\n")
+
+    for pair in current_wl:
+        base = pair.split("/")[0]
+
+        if base == "BTC":
+            print(f"  ⏭️  {pair} — siempre mantenido (referencia macro)")
+            kept.append(pair)
+            continue
+
+        print(f"📊 Re-validando {pair}...")
+        stats = run_backtest_single(pair, timerange)
+
+        if stats is None:
+            print(f"  ⚠️  Backtest falló — mantenido por precaución")
+            kept.append(pair)
+            continue
+
+        if stats["trades"] < MIN_TRADES:
+            print(f"  ⏭️  Solo {stats['trades']} trades en el período — sin datos suficientes, se mantiene")
+            kept.append(pair)
+            continue
+
+        passed, reason = evaluate(stats)
+        if passed:
+            print(f"  ✅ Sigue bien: {reason}")
+            kept.append(pair)
+        else:
+            print(f"  ❌ DEGRADADO: {reason} → se elimina de whitelist")
+            demoted.append((pair, stats, reason))
+
+    return demoted, kept
 
 
 def get_binance_usdc_pairs(top_n: int = 40) -> set[str]:
@@ -260,9 +321,10 @@ def get_pairs_to_test(explicit: list[str] | None) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-validación de pares nuevos")
+    parser = argparse.ArgumentParser(description="Auto-validación de pares nuevos + re-validación whitelist")
     parser.add_argument("--pairs", nargs="+", help="Pares a testear (sin /USDC)")
     parser.add_argument("--dry-run", action="store_true", help="Solo mostrar, no modificar configs")
+    parser.add_argument("--skip-revalidation", action="store_true", help="No re-validar pares existentes")
     default_timerange = f"20240101-{date.today().strftime('%Y%m%d')}"
     parser.add_argument("--timerange", default=default_timerange, help="Rango de backtest")
     parser.add_argument("--no-download", action="store_true", help="No descargar datos (ya existen)")
@@ -272,19 +334,27 @@ def main():
     print("🔍 VALIDACIÓN AUTOMÁTICA DE PARES")
     print("=" * 60)
 
+    # --- FASE 1: re-validar pares existentes en whitelist ---
+    demoted = []
+    if not args.skip_revalidation and not args.pairs:
+        demoted, _ = revalidate_whitelist(args.timerange)
+
+    # --- FASE 2: descubrir y validar pares nuevos ---
     pairs = get_pairs_to_test(args.pairs)
     if not pairs:
-        print("No hay pares nuevos que validar.")
-        return
+        print("\nNo hay pares nuevos que validar.")
+        if not demoted:
+            return
 
-    print(f"\nPares a validar: {len(pairs)}")
-    for p in pairs:
-        print(f"  - {p}")
+    if pairs:
+        print(f"\nPares nuevos a validar: {len(pairs)}")
+        for p in pairs:
+            print(f"  - {p}")
 
     approved = []
     rejected = []
 
-    for pair in pairs:
+    for pair in (pairs or []):
         base = pair.split("/")[0]
         print(f"\n{'─'*50}")
         print(f"📊 Validando {pair}...")
@@ -318,37 +388,54 @@ def main():
 
     # Resumen
     print(f"\n{'='*60}")
-    print("📋 RESUMEN")
+    print("📋 RESUMEN FINAL")
     print(f"{'='*60}")
-    print(f"\n✅ APROBADOS ({len(approved)}):")
-    for pair, stats in approved:
-        print(f"  {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} ({stats['avg_profit']:.2f}% avg)")
 
-    print(f"\n❌ RECHAZADOS ({len(rejected)}):")
-    for pair, stats, reason in rejected:
-        t = stats['trades']
-        p = stats['total_profit']
-        print(f"  {pair}: {t}T, ${p:.0f} — {reason}")
+    if demoted:
+        print(f"\n🔻 DEGRADADOS — eliminados de whitelist ({len(demoted)}):")
+        for pair, stats, reason in demoted:
+            print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
+    else:
+        print(f"\n✅ Todos los pares existentes siguen cumpliendo criterios")
+
+    if approved:
+        print(f"\n✅ NUEVOS APROBADOS ({len(approved)}):")
+        for pair, stats in approved:
+            print(f"  {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} ({stats['avg_profit']:.2f}% avg)")
+
+    if rejected:
+        print(f"\n❌ NUEVOS RECHAZADOS ({len(rejected)}):")
+        for pair, stats, reason in rejected:
+            print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
 
     if args.dry_run:
         print("\n⚠️  DRY RUN — no se modifica ningún config")
         return
 
     # Aplicar cambios
-    if approved or rejected:
+    if approved or rejected or demoted:
         print(f"\n🔧 Actualizando configs...")
         for pair, _ in approved:
             add_to_whitelist(pair)
         for pair, stats, _ in rejected:
-            if stats["trades"] >= 3:  # solo blacklist si tuvimos suficientes datos
+            if stats["trades"] >= 3:
                 add_to_blacklist(pair)
+        for pair, stats, _ in demoted:
+            remove_from_whitelist(pair)
+            add_to_blacklist(pair)
 
-        # Commit y push solo si hay cambios reales en los configs
+        # Commit y push solo si hay cambios reales
         subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
         diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
         if diff.returncode != 0:
-            pairs_str = " ".join(p for p, _ in approved) or "solo rechazados"
-            msg = f"feat: auto-validación pares — añadidos: {pairs_str}"
+            added_str = " ".join(p for p, _ in approved)
+            removed_str = " ".join(p for p, _, _ in demoted)
+            parts = []
+            if added_str:
+                parts.append(f"añadidos: {added_str}")
+            if removed_str:
+                parts.append(f"eliminados: {removed_str}")
+            msg = f"feat: auto-validación pares — {', '.join(parts)}"
             subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
             subprocess.run(["git", "push"], cwd=ROOT)
             print("\n🚀 Cambios commiteados y pusheados.")
