@@ -66,6 +66,16 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${SSH_PORT}" \
             ./ "${SSH_USER}@${SSH_HOST}:${TARGET_DIR}/"
 
+      - name: Backup DB antes de reiniciar
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          TARGET_DIR: ${{ secrets.TARGET_DIR }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            "cp -f ${TARGET_DIR}/trades.sqlite ${TARGET_DIR}/trades.sqlite.predeploy 2>/dev/null || true"
+
       - name: Reiniciar servicio
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
