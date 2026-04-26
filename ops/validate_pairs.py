@@ -37,6 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 CONFIG_BASE = ROOT / "config.base.json"
+CONFIG_PAIRS = ROOT / "config.pairs.json"   # whitelist dinámica — no en git, no sobreescrita por deploys
 CONFIG_BACKTEST = ROOT / "config.backtest.json"
 CONFIG_SECRETS = next(
     (p for p in [ROOT / "config.secrets.json", ROOT / "ops" / "config.secrets.json"] if p.exists()),
@@ -190,10 +191,12 @@ def evaluate(stats: dict) -> tuple[bool, str]:
 
 
 def overwrite_whitelist(new_whitelist: list[str]):
-    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
-        cfg = load_json(cfg_path)
-        cfg["exchange"]["pair_whitelist"] = new_whitelist
-        save_json(cfg_path, cfg)
+    # Escribe config.pairs.json (servidor, no en git) con la whitelist dinámica
+    save_json(CONFIG_PAIRS, {"exchange": {"pair_whitelist": new_whitelist}})
+    # Actualiza también config.backtest.json para que los backtests locales sean consistentes
+    cfg = load_json(CONFIG_BACKTEST)
+    cfg["exchange"]["pair_whitelist"] = new_whitelist
+    save_json(CONFIG_BACKTEST, cfg)
 
 
 def main():
@@ -303,22 +306,14 @@ def main():
         print(f"  - Eliminados: {', '.join(sorted(removed))}")
 
     overwrite_whitelist(new_whitelist)
+    print("\n✅ config.pairs.json actualizado.")
 
-    subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
-    diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
-    if diff.returncode != 0:
-        parts = []
-        if added:
-            parts.append(f"+{' '.join(sorted(added))}")
-        if removed:
-            parts.append(f"-{' '.join(sorted(removed))}")
-        msg = f"feat: whitelist actualizada — {', '.join(parts)}"
-        subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-        push = subprocess.run(["git", "push"], cwd=ROOT)
-        if push.returncode == 0:
-            print("\n🚀 Cambios commiteados y pusheados → deploy automático.")
-        else:
-            print("\n⚠️  Whitelist actualizada localmente pero git push FALLÓ — revisar credenciales git en el servidor.")
+    # Reiniciar freqtrade para que cargue la nueva whitelist
+    r = subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
+    if r.returncode == 0:
+        print("🔄 freqtrade reiniciado con la nueva whitelist.")
+    else:
+        print("⚠️  No se pudo reiniciar freqtrade — reinícialo manualmente: sudo systemctl restart freqtrade")
 
 
 if __name__ == "__main__":
