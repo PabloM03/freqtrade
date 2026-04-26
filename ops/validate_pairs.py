@@ -6,17 +6,19 @@ desde cero con todos los pares que cumplen criterios de rendimiento.
 Diseño:
   - La whitelist se SOBREESCRIBE cada lunes con los mejores pares del momento.
   - La blacklist en config.base.json es SOLO MANUAL — este script nunca la toca.
+    Es la única fuente de exclusiones; no hay lista separada en el script.
   - BTC/USDC siempre se incluye (referencia para el filtro macro_ok).
-  - Los cambios van a git (commit + push) → CI/CD despliega y reinicia el bot.
-    Esto garantiza que cualquier rollback de un commit restaura el estado completo.
+  - Si hay cambios: reinicia freqtrade localmente y hace push a GitHub solo para
+    dejar constancia en el historial (con [skip ci] — no dispara el pipeline).
+    Cualquier rollback de un commit restaura el estado completo de la whitelist.
 
 Flujo:
   1. Candidatos = top-40 Binance por volumen + pares de whitelist actual
-     (excluyendo NEVER_INCLUDE y la blacklist manual)
+     (excluyendo la blacklist manual)
   2. Para cada candidato: descarga datos si no existen, corre backtest (6 meses)
   3. Nueva whitelist = BTC + todos los que pasan criterios (≥3T, WR≥70%...)
   4. Sobreescribe whitelist en config.base.json y config.backtest.json
-  5. Commit + push → GitHub Actions despliega automáticamente
+  5. Reinicia freqtrade localmente + push a GitHub [skip ci]
 
 Criterios de aprobación:
   WR >= 70%, Trades >= 3, Avg profit > 0.5%, Total profit > 0
@@ -61,17 +63,6 @@ MIN_WR = 0.70
 MIN_TRADES = 3
 MIN_AVG_PROFIT = 0.5
 MIN_TOTAL_PROFIT = 0
-
-# Nunca se incluyen — ni aunque pasen backtest. No se tocan por script.
-NEVER_INCLUDE = {
-    "SOL", "PEPE", "SHIB", "DOGE", "ADA", "XRP", "LTC", "AVAX",
-    "FLOKI", "BNB", "WBTC", "WETH",
-    "MEME", "NEIRO", "BOME", "SUI", "ORDI",
-    "TIA", "WLD", "DOT",
-    "AAVE", "TAO", "ENJ", "BLUR", "ZRO",
-    "U", "AUD", "EUR", "USD1", "FDUSD",
-    "GUN",
-}
 
 
 def run(cmd: list[str], cwd=ROOT, timeout=300) -> tuple[int, str, str]:
@@ -223,8 +214,7 @@ def main():
     print(f"   Rango: {args.timerange}")
     print("=" * 60)
 
-    manual_bl = get_manual_blacklist_bases()
-    excluded = NEVER_INCLUDE | manual_bl | {"BTC"}
+    excluded = get_manual_blacklist_bases() | {"BTC"}
 
     if args.pairs:
         candidates = [c.upper() for c in args.pairs if c.upper() not in excluded]
@@ -336,6 +326,12 @@ def main():
 
     overwrite_whitelist(new_whitelist)
 
+    # Reiniciar el bot localmente para que cargue la nueva whitelist.
+    # El push a GitHub es solo para historial/rollback — [skip ci] evita que el
+    # pipeline haga rsync de vuelta al servidor (los cambios ya están aquí).
+    subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
+    print("\n🔄 Servicio freqtrade reiniciado con la nueva whitelist.")
+
     subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
     if diff.returncode != 0:
@@ -344,14 +340,14 @@ def main():
             parts.append(f"+{' '.join(sorted(added))}")
         if removed:
             parts.append(f"-{' '.join(sorted(removed))}")
-        msg = f"feat: whitelist actualizada — {', '.join(parts)}"
+        msg = f"chore(whitelist): {', '.join(parts)} [skip ci]"
         subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
         # push origin HEAD:develop funciona desde detached HEAD (rsync no actualiza .git/)
         push = subprocess.run(["git", "push", "origin", "HEAD:develop"], cwd=ROOT)
         if push.returncode == 0:
-            print("\n🚀 Cambios commiteados y pusheados → CI/CD despliega automáticamente.")
+            print("📝 Whitelist commiteada en GitHub (solo historial — sin pipeline).")
         else:
-            print("\n⚠️  Commit OK pero git push FALLÓ — revisar SSH deploy key del servidor.")
+            print("⚠️  Commit OK pero git push FALLÓ — revisar SSH deploy key del servidor.")
 
 
 if __name__ == "__main__":
