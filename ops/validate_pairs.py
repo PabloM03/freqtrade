@@ -329,8 +329,11 @@ def main():
     # Reiniciar el bot localmente para que cargue la nueva whitelist.
     # El push a GitHub es solo para historial/rollback — [skip ci] evita que el
     # pipeline haga rsync de vuelta al servidor (los cambios ya están aquí).
-    subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
-    print("\n🔄 Servicio freqtrade reiniciado con la nueva whitelist.")
+    restart = subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
+    if restart.returncode == 0:
+        print("\n🔄 Servicio freqtrade reiniciado con la nueva whitelist.")
+    else:
+        print("\n⚠️  systemctl restart falló (código {restart.returncode}) — whitelist actualizada pero bot NO reiniciado.")
 
     subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)

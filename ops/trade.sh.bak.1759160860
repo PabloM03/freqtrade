@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Echo útil en journalctl
-echo "[trade] usando /home/ubuntu/freqtrade/ops/config.withparams.json"
-
-# Lanzar freqtrade SIEMPRE con ese config y SIN archivos de parámetros
-exec freqtrade trade \
-  -c /home/ubuntu/freqtrade/ops/config.withparams.json

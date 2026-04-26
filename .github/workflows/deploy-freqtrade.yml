@@ -50,6 +50,7 @@ jobs:
             --exclude='config.secrets.json' \
             --exclude='ops/config.withparams.json' \
             --exclude='ops/params.json' \
+            --exclude='ops/.env' \
             --exclude='*.sqlite' \
             --exclude='*.sqlite-shm' \
             --exclude='*.sqlite-wal' \
