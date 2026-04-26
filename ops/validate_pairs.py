@@ -37,6 +37,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 CONFIG_BASE = ROOT / "config.base.json"
+
+# Freqtrade binary: busca en conda envs conocidos, fallback a PATH
+def _find_freqtrade() -> list[str]:
+    for candidate in [
+        "/home/ubuntu/miniconda3/envs/freqtrade/bin/freqtrade",
+        "/home/pablom03/anaconda3/envs/freqtrade/bin/freqtrade",
+    ]:
+        if Path(candidate).exists():
+            return [candidate]
+    return ["conda", "run", "-n", "freqtrade", "freqtrade"]
+
+FREQTRADE = _find_freqtrade()
 CONFIG_PAIRS = ROOT / "config.pairs.json"   # whitelist dinámica — no en git, no sobreescrita por deploys
 CONFIG_BACKTEST = ROOT / "config.backtest.json"
 CONFIG_SECRETS = next(
@@ -114,7 +126,7 @@ def download_pair_data(pair_usdc: str, timerange: str) -> bool:
     print(f"  Descargando datos para {pair_usdc}...")
     try:
         code, _, err = run([
-            "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
+            *FREQTRADE, "download-data",
             "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST), "-c", str(CONFIG_SECRETS),
             "--pairs", pair_usdc, "--timeframes", "15m", "--timerange", timerange, "--prepend",
         ], timeout=600)
@@ -138,7 +150,7 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     try:
         try:
             code, *_ = run([
-                "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
+                *FREQTRADE, "backtesting",
                 "-c", str(CONFIG_BASE), "-c", str(tmp_cfg), "-c", str(CONFIG_SECRETS),
                 "-s", "MyStrategy", "--timerange", timerange, "--cache", "none",
             ], timeout=300)
