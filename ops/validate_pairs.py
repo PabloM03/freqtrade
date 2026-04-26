@@ -66,8 +66,19 @@ MIN_TOTAL_PROFIT = 0
 
 
 def run(cmd: list[str], cwd=ROOT, timeout=300) -> tuple[int, str, str]:
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    return r.returncode, r.stdout, r.stderr
+    # os.setsid crea un grupo de proceso propio → os.killpg mata todo el árbol
+    # en caso de timeout (evita procesos freqtrade huérfanos)
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, preexec_fn=os.setsid,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return proc.returncode, stdout, stderr
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), 9)
+        proc.communicate()
+        raise
 
 
 def load_json(path: Path) -> dict:
