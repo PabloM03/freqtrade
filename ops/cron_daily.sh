@@ -3,7 +3,7 @@
 # ================================================================
 # Instalar en cron del servidor:
 #   crontab -e
-#   10 0 * * * /home/ubuntu/freqtrade/ops/cron_daily.sh >> /home/ubuntu/freqtrade/ops/logs/cron_daily.log 2>&1
+#   10 0 * * * /home/ubuntu/freqtrade/ops/cron_daily.sh >> /home/ubuntu/freqtrade/logs/cron_daily.log 2>&1
 #
 # Requiere:
 #   - ANTHROPIC_API_KEY en ops/.env (para analyze_news.py)
@@ -13,7 +13,7 @@ set -euo pipefail
 
 BASE="/home/ubuntu/freqtrade"
 OPS="$BASE/ops"
-LOG_DIR="$OPS/logs"
+LOG_DIR="$BASE/logs"
 mkdir -p "$LOG_DIR"
 
 # Añadir conda al PATH (no está disponible en cron por defecto)
