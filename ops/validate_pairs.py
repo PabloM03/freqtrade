@@ -111,11 +111,15 @@ def get_binance_usdc_top(top_n: int = 40) -> set[str]:
 
 def download_pair_data(pair_usdc: str, timerange: str) -> bool:
     print(f"  Descargando datos para {pair_usdc}...")
-    code, _, err = run([
-        "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
-        "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST), "-c", str(CONFIG_SECRETS),
-        "--pairs", pair_usdc, "--timeframes", "15m", "--timerange", timerange, "--prepend",
-    ], timeout=180)
+    try:
+        code, _, err = run([
+            "conda", "run", "-n", "freqtrade", "freqtrade", "download-data",
+            "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST), "-c", str(CONFIG_SECRETS),
+            "--pairs", pair_usdc, "--timeframes", "15m", "--timerange", timerange, "--prepend",
+        ], timeout=600)
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️  Timeout descargando datos (>600s) — saltado")
+        return False
     if code != 0:
         print(f"  ⚠️  Error descargando: {err[-200:]}")
         return False
