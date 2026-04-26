@@ -41,7 +41,7 @@ echo "[cron_daily] step 2: analyze_news (Tavily+keywords o Claude AI)"
 # La blacklist es SOLO MANUAL — este script nunca la toca.
 if [ "$(date +%u)" = "1" ]; then
     echo "[cron_daily] step 3: validate_pairs (lunes — ventana 6 meses)"
-    "$PYTHON" "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló"
+    PYTHONUNBUFFERED=1 "$PYTHON" "$OPS/validate_pairs.py" && echo "[cron_daily] validate_pairs OK" || echo "[cron_daily] WARN: validate_pairs falló"
 else
     echo "[cron_daily] step 3: validate_pairs — omitido (solo lunes)"
 fi
