@@ -32,7 +32,7 @@ import re
 import subprocess
 import urllib.request
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -201,7 +201,7 @@ def main():
     parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USDC) — no sobreescribe")
     parser.add_argument("--dry-run", action="store_true", help="Muestra resultado sin modificar configs")
     parser.add_argument("--no-download", action="store_true", help="No descarga datos nuevos")
-    default_timerange = f"20240101-{date.today().strftime('%Y%m%d')}"
+    default_timerange = f"{(date.today() - timedelta(days=182)).strftime('%Y%m%d')}-{date.today().strftime('%Y%m%d')}"
     parser.add_argument("--timerange", default=default_timerange)
     args = parser.parse_args()
 
