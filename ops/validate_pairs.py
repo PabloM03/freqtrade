@@ -273,7 +273,16 @@ def main():
                 print(f"  ❌ NO PASA: {reason}")
                 rejected.append((pair, stats, reason))
 
-    new_whitelist = ["BTC/USDC"] + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
+    # Pares sin datos que ya estaban en la whitelist → se preservan.
+    # Solo se eliminan pares que fallaron explícitamente el backtest (rejected).
+    current_wl_set = set(get_current_whitelist())
+    preserved = [p for p in no_data if p in current_wl_set and p != "BTC/USDC"]
+
+    new_whitelist = (
+        ["BTC/USDC"]
+        + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
+        + preserved
+    )
 
     print(f"\n{'='*60}")
     print("📋 RESULTADO")
@@ -284,6 +293,8 @@ def main():
         for pair, stats in approved:
             if pair == p:
                 stats_str = f"  {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+        if p in preserved:
+            stats_str = "  (preservado — sin datos nuevos)"
         print(f"  {p}{stats_str}")
 
     if rejected:
@@ -292,7 +303,12 @@ def main():
             print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
 
     if no_data:
+        new_no_data = [p for p in no_data if p not in current_wl_set]
         print(f"\n⏭️  Sin datos suficientes ({len(no_data)}): {', '.join(no_data)}")
+        if preserved:
+            print(f"   ↳ {len(preserved)} preservados en whitelist (ya validados previamente)")
+        if new_no_data:
+            print(f"   ↳ {len(new_no_data)} nuevos ignorados (sin historial validado)")
 
     if args.dry_run or args.pairs:
         print("\n⚠️  DRY RUN / modo --pairs — no se modifica ningún config")
