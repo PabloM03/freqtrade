@@ -27,6 +27,12 @@ CONDA_PYTHON="/home/ubuntu/miniconda3/envs/freqtrade/bin/python3"
 PYTHON="${CONDA_PYTHON:-python3}"
 [ -x "$CONDA_PYTHON" ] && PYTHON="$CONDA_PYTHON"
 
+# Cargar API keys desde ops/.env (TAVILY_API_KEY, ANTHROPIC_API_KEY)
+# set -a exporta automáticamente todas las variables definidas en el archivo
+if [ -f "$OPS/.env" ]; then
+  set -a; source "$OPS/.env"; set +a
+fi
+
 echo "[cron_daily] $(date -u +'%F %T') UTC — inicio"
 
 # 1. Fear & Greed + CoinGecko trending + Binance spikes + RSS news
