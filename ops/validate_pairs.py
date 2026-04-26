@@ -4,17 +4,19 @@ Gestión automática de la whitelist: cada ejecución reconstruye la whitelist
 desde cero con todos los pares que cumplen criterios de rendimiento.
 
 Diseño:
-  - La whitelist se SOBREESCRIBE cada día con los mejores pares del momento.
+  - La whitelist se SOBREESCRIBE cada lunes con los mejores pares del momento.
   - La blacklist en config.base.json es SOLO MANUAL — este script nunca la toca.
   - BTC/USDC siempre se incluye (referencia para el filtro macro_ok).
+  - Los cambios van a git (commit + push) → CI/CD despliega y reinicia el bot.
+    Esto garantiza que cualquier rollback de un commit restaura el estado completo.
 
 Flujo:
   1. Candidatos = top-40 Binance por volumen + pares de whitelist actual
      (excluyendo NEVER_INCLUDE y la blacklist manual)
-  2. Para cada candidato: descarga datos si no existen, corre backtest
+  2. Para cada candidato: descarga datos si no existen, corre backtest (6 meses)
   3. Nueva whitelist = BTC + todos los que pasan criterios (≥3T, WR≥70%...)
   4. Sobreescribe whitelist en config.base.json y config.backtest.json
-  5. Commit + push si hubo cambios
+  5. Commit + push → GitHub Actions despliega automáticamente
 
 Criterios de aprobación:
   WR >= 70%, Trades >= 3, Avg profit > 0.5%, Total profit > 0
@@ -37,8 +39,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 CONFIG_BASE = ROOT / "config.base.json"
+CONFIG_BACKTEST = ROOT / "config.backtest.json"
+CONFIG_SECRETS = next(
+    (p for p in [ROOT / "config.secrets.json", ROOT / "ops" / "config.secrets.json"] if p.exists()),
+    ROOT / "config.secrets.json",
+)
 
-# Freqtrade binary: busca en conda envs conocidos, fallback a PATH
+# Freqtrade binary: busca en conda envs conocidos, fallback a conda run
 def _find_freqtrade() -> list[str]:
     for candidate in [
         "/home/ubuntu/miniconda3/envs/freqtrade/bin/freqtrade",
@@ -49,12 +56,6 @@ def _find_freqtrade() -> list[str]:
     return ["conda", "run", "-n", "freqtrade", "freqtrade"]
 
 FREQTRADE = _find_freqtrade()
-CONFIG_PAIRS = ROOT / "config.pairs.json"   # whitelist dinámica — no en git, no sobreescrita por deploys
-CONFIG_BACKTEST = ROOT / "config.backtest.json"
-CONFIG_SECRETS = next(
-    (p for p in [ROOT / "config.secrets.json", ROOT / "ops" / "config.secrets.json"] if p.exists()),
-    ROOT / "config.secrets.json",
-)
 
 MIN_WR = 0.70
 MIN_TRADES = 3
@@ -90,13 +91,10 @@ def save_json(path: Path, data: dict):
 
 
 def get_current_whitelist() -> list[str]:
-    # config.pairs.json es la whitelist activa en el servidor; config.base.json es el fallback
-    src = CONFIG_PAIRS if CONFIG_PAIRS.exists() else CONFIG_BASE
-    return load_json(src)["exchange"]["pair_whitelist"]
+    return load_json(CONFIG_BASE)["exchange"]["pair_whitelist"]
 
 
 def get_manual_blacklist_bases() -> set[str]:
-    """Lee la blacklist manual del config — este script nunca la modifica."""
     bases = set()
     for pattern in load_json(CONFIG_BASE)["exchange"]["pair_blacklist"]:
         m = re.match(r"^([A-Z0-9]+)/", pattern)
@@ -205,12 +203,10 @@ def evaluate(stats: dict) -> tuple[bool, str]:
 
 
 def overwrite_whitelist(new_whitelist: list[str]):
-    # Escribe config.pairs.json (servidor, no en git) con la whitelist dinámica
-    save_json(CONFIG_PAIRS, {"exchange": {"pair_whitelist": new_whitelist}})
-    # Actualiza también config.backtest.json para que los backtests locales sean consistentes
-    cfg = load_json(CONFIG_BACKTEST)
-    cfg["exchange"]["pair_whitelist"] = new_whitelist
-    save_json(CONFIG_BACKTEST, cfg)
+    for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
+        cfg = load_json(cfg_path)
+        cfg["exchange"]["pair_whitelist"] = new_whitelist
+        save_json(cfg_path, cfg)
 
 
 def main():
@@ -228,10 +224,9 @@ def main():
     print("=" * 60)
 
     manual_bl = get_manual_blacklist_bases()
-    excluded = NEVER_INCLUDE | manual_bl | {"BTC"}  # BTC se añade siempre al final
+    excluded = NEVER_INCLUDE | manual_bl | {"BTC"}
 
     if args.pairs:
-        # Modo evaluación manual — no sobreescribe, solo informa
         candidates = [c.upper() for c in args.pairs if c.upper() not in excluded]
     else:
         current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()} - excluded
@@ -240,9 +235,9 @@ def main():
 
     print(f"\nCandidatos a evaluar: {len(candidates)}")
 
-    approved = []  # (pair, stats)
-    rejected = []  # (pair, stats, reason)
-    no_data  = []  # pair
+    approved = []
+    rejected = []
+    no_data  = []
 
     for coin in candidates:
         pair = f"{coin}/USDC"
@@ -278,10 +273,8 @@ def main():
                 print(f"  ❌ NO PASA: {reason}")
                 rejected.append((pair, stats, reason))
 
-    # Construir nueva whitelist: BTC siempre primero, luego aprobados por profit desc
     new_whitelist = ["BTC/USDC"] + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
 
-    # Resumen
     print(f"\n{'='*60}")
     print("📋 RESULTADO")
     print(f"{'='*60}")
@@ -305,7 +298,6 @@ def main():
         print("\n⚠️  DRY RUN / modo --pairs — no se modifica ningún config")
         return
 
-    # Comparar con whitelist actual
     current_wl = get_current_whitelist()
     if set(new_whitelist) == set(current_wl):
         print("\nℹ️  Whitelist sin cambios — nada que commitear.")
@@ -320,14 +312,22 @@ def main():
         print(f"  - Eliminados: {', '.join(sorted(removed))}")
 
     overwrite_whitelist(new_whitelist)
-    print("\n✅ config.pairs.json actualizado.")
 
-    # Reiniciar freqtrade para que cargue la nueva whitelist
-    r = subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
-    if r.returncode == 0:
-        print("🔄 freqtrade reiniciado con la nueva whitelist.")
-    else:
-        print("⚠️  No se pudo reiniciar freqtrade — reinícialo manualmente: sudo systemctl restart freqtrade")
+    subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
+    diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
+    if diff.returncode != 0:
+        parts = []
+        if added:
+            parts.append(f"+{' '.join(sorted(added))}")
+        if removed:
+            parts.append(f"-{' '.join(sorted(removed))}")
+        msg = f"feat: whitelist actualizada — {', '.join(parts)}"
+        subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
+        push = subprocess.run(["git", "push"], cwd=ROOT)
+        if push.returncode == 0:
+            print("\n🚀 Cambios commiteados y pusheados → CI/CD despliega automáticamente.")
+        else:
+            print("\n⚠️  Commit OK pero git push FALLÓ — revisar credenciales SSH del servidor.")
 
 
 if __name__ == "__main__":
