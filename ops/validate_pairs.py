@@ -90,7 +90,9 @@ def save_json(path: Path, data: dict):
 
 
 def get_current_whitelist() -> list[str]:
-    return load_json(CONFIG_BASE)["exchange"]["pair_whitelist"]
+    # config.pairs.json es la whitelist activa en el servidor; config.base.json es el fallback
+    src = CONFIG_PAIRS if CONFIG_PAIRS.exists() else CONFIG_BASE
+    return load_json(src)["exchange"]["pair_whitelist"]
 
 
 def get_manual_blacklist_bases() -> set[str]:
