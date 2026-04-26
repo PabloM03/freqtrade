@@ -311,6 +311,13 @@ def main():
     if removed:
         print(f"  - Eliminados: {', '.join(sorted(removed))}")
 
+    # Sincronizar con origin/develop antes de commitear para evitar push rejected.
+    # rsync mantiene los archivos actualizados pero no toca .git/ → HEAD puede estar
+    # desincronizado. Fetch + reset --hard pone HEAD al último commit de origin sin
+    # tocar los archivos que ya coinciden, y luego sobreescribimos la whitelist.
+    subprocess.run(["git", "fetch", "origin", "develop"], cwd=ROOT, capture_output=True)
+    subprocess.run(["git", "reset", "--hard", "origin/develop"], cwd=ROOT, capture_output=True)
+
     overwrite_whitelist(new_whitelist)
 
     subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
@@ -323,11 +330,12 @@ def main():
             parts.append(f"-{' '.join(sorted(removed))}")
         msg = f"feat: whitelist actualizada — {', '.join(parts)}"
         subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-        push = subprocess.run(["git", "push"], cwd=ROOT)
+        # push origin HEAD:develop funciona desde detached HEAD (rsync no actualiza .git/)
+        push = subprocess.run(["git", "push", "origin", "HEAD:develop"], cwd=ROOT)
         if push.returncode == 0:
             print("\n🚀 Cambios commiteados y pusheados → CI/CD despliega automáticamente.")
         else:
-            print("\n⚠️  Commit OK pero git push FALLÓ — revisar credenciales SSH del servidor.")
+            print("\n⚠️  Commit OK pero git push FALLÓ — revisar SSH deploy key del servidor.")
 
 
 if __name__ == "__main__":
