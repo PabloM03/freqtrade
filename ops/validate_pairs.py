@@ -135,11 +135,15 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     tmp_cfg = ROOT / "config.backtest.tmp.json"
     save_json(tmp_cfg, bt_cfg)
     try:
-        code, *_ = run([
-            "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
-            "-c", str(CONFIG_BASE), "-c", str(tmp_cfg), "-c", str(CONFIG_SECRETS),
-            "-s", "MyStrategy", "--timerange", timerange, "--cache", "none",
-        ], timeout=300)
+        try:
+            code, *_ = run([
+                "conda", "run", "-n", "freqtrade", "freqtrade", "backtesting",
+                "-c", str(CONFIG_BASE), "-c", str(tmp_cfg), "-c", str(CONFIG_SECRETS),
+                "-s", "MyStrategy", "--timerange", timerange, "--cache", "none",
+            ], timeout=300)
+        except subprocess.TimeoutExpired:
+            print(f"  ⚠️  Timeout en backtest (>300s) — saltado")
+            return None
         if code != 0:
             return None
         results_dir = ROOT / "user_data" / "backtest_results"
@@ -310,8 +314,11 @@ def main():
             parts.append(f"-{' '.join(sorted(removed))}")
         msg = f"feat: whitelist actualizada — {', '.join(parts)}"
         subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-        subprocess.run(["git", "push"], cwd=ROOT)
-        print("\n🚀 Cambios commiteados y pusheados → deploy automático.")
+        push = subprocess.run(["git", "push"], cwd=ROOT)
+        if push.returncode == 0:
+            print("\n🚀 Cambios commiteados y pusheados → deploy automático.")
+        else:
+            print("\n⚠️  Whitelist actualizada localmente pero git push FALLÓ — revisar credenciales git en el servidor.")
 
 
 if __name__ == "__main__":
