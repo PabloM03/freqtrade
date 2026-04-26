@@ -48,7 +48,6 @@ jobs:
             --exclude='.gitignore' \
             --exclude='config.json' \
             --exclude='config.secrets.json' \
-            --exclude='config.pairs.json' \
             --exclude='ops/config.withparams.json' \
             --exclude='ops/params.json' \
             --exclude='*.sqlite' \
