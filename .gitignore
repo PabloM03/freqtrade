@@ -131,3 +131,7 @@ target/
 
 # Sentiment API tokens (never commit)
 ops/.env
+
+# Backup files generados automáticamente
+*.bak
+*.bak.*
