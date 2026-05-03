@@ -374,16 +374,17 @@ class MyStrategy(IStrategy):
         # ai_score: -1 (noticias muy negativas del coin) a +1 (noticias muy positivas)
         # Ejemplos: "avance de IA" → LINK/SOL sube | "hack de protocolo" → bearish
         # Solo disponible en live trading — en backtest = 0 (no afecta resultados históricos)
-        if not hasattr(self, '_ai_scores'):
+        from datetime import date as date_type
+        today_str = str(date_type.today())
+        if not hasattr(self, '_ai_scores') or getattr(self, '_ai_scores_date', None) != today_str:
             self._ai_scores = {}
+            self._ai_scores_date = today_str
             news_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 '..', 'data', 'sentiment', 'news_themes.json'
             )
             if os.path.exists(news_path):
                 try:
-                    from datetime import date as date_type
-                    today_str = str(date_type.today())
                     history = json.loads(open(news_path).read())
                     entry = next((e for e in reversed(history) if e.get('date') == today_str), None)
                     if entry:
