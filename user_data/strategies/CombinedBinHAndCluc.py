@@ -334,7 +334,6 @@ class MyStrategy(IStrategy):
             (dataframe['low'] <= dataframe['low'].shift(1)) &
             (dataframe['low'] <= dataframe['low'].shift(2))
         )
-
         # Anti-chase helpers
         dataframe['green'] = dataframe['close'] > dataframe['open']
         # green_streak: NO se escala × m. La ventana son los últimos 3 candles (misma lógica que a 1h)
@@ -642,6 +641,33 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
+        # L) Trend Breakout — compra fortaleza, no debilidad.
+        # Subestrategia de tendencia para capturar rallies sostenidos donde A-J nunca disparan
+        # (RSI > 38, sin troughs profundos). Complementa la reversión sin reemplazarla.
+        #
+        # Entrada: precio rompiendo máximos de 20h con tendencia alcista establecida.
+        # Exit: trail inteligente basado en velocidad de mercado (custom_stoploss detecta 'L_').
+        # No usa anti_chase ni no_buy_high — comprar fortaleza ES la señal.
+        L_trend_breakout = (
+            # Breakout: cierre por encima del máximo 20h de ayer
+            (dataframe['close'] > dataframe['hh_20'].shift(1) * 1.002) &
+            # Tendencia establecida: ADX alto + Plus_DI dominante
+            (dataframe['adx'] > 25) &
+            (dataframe['plus_di'] > dataframe['minus_di'] * 1.15) &
+            # Alineación EMA: EMA80 > EMA200
+            (dataframe['ema_fast'] > dataframe['ema_slow']) &
+            # RSI en zona tendencia (no sobrecomprado)
+            (dataframe['rsi'] > 52) & (dataframe['rsi'] < 72) &
+            # MACD positivo y acelerando
+            (dataframe['macdhist'] > 0) &
+            (dataframe['macdhist'] > dataframe['macdhist'].shift(1)) &
+            dataframe['ema8_slope_up'] &
+            dataframe['vol_spike']
+        )
+        # base_filter_L: solo anti_cuchillo + ema50_ok — sin anti_chase (compramos fortaleza)
+        base_filter_L = anti_cuchillo & ema50_ok
+        mask_L = L_trend_breakout & base_filter_L & macro_ok & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -671,6 +697,9 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
+
+        dataframe.loc[mask_L, 'enter_long'] = 1
+        dataframe.loc[mask_L, 'enter_tag'] = 'L_trend_breakout'
 
         return dataframe
 
@@ -1014,13 +1043,34 @@ class MyStrategy(IStrategy):
         if p <= STOPLOSS_ABS:
             return -0.001
 
+        # ---- Stop inteligente para trades de tendencia (L_trend_breakout) ----
+        # Trail dinámico desde el inicio: ATR × velocidad del mercado (la "derivada").
+        # roc5 alto  → trail amplio (mercado acelerando, no salir del cohete)
+        # roc5 bajo  → trail ajustado (momentum frenando, asegurar beneficio)
+        # Pérdidas cortadas rápido por ATR: ~-3% BTC, ~-7% memes — evita drawdowns grandes.
+        if getattr(trade, 'enter_tag', None) and str(trade.enter_tag).startswith('L_'):
+            try:
+                df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
+                last = df.iloc[-1]
+                atr_pct = float(last['atr']) / max(current_rate, 1e-9)
+                roc5 = float(last['roc5'])
+                base_trail = max(0.025, min(0.07, 2.5 * atr_pct))
+                if roc5 > 2.0:    vel_mult = 1.5   # cohete
+                elif roc5 > 1.0:  vel_mult = 1.2   # fuerte
+                elif roc5 < -0.5: vel_mult = 0.75  # frenando
+                else:             vel_mult = 1.0
+                trail = min(0.08, base_trail * vel_mult)
+            except Exception:
+                trail = 0.04
+            return stoploss_from_open(p - trail, p)
+
         # Large-caps (BTC, SOL, LINK) tienen movimientos más pequeños: trail más ajustado.
         # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
         _LARGECAP = {'BTC/USDC', 'SOL/USDC', 'LINK/USDC', 'ETH/USDC', 'ADA/USDC'}
         if pair in _LARGECAP:
-            trail_threshold, trail_pct = 0.025, 0.010   # largecap: 2.5% umbral, 1% trail
+            trail_threshold, trail_pct = 0.025, 0.008   # largecap: 2.5% umbral, 0.8% trail
         else:
-            trail_threshold, trail_pct = 0.035, 0.010   # meme: 3.5% umbral, 1% trail (captura más en bounces 3.5-8%)
+            trail_threshold, trail_pct = 0.035, 0.008   # meme: 3.5% umbral, 0.8% trail
 
         if p < trail_threshold:
             return stoploss_from_open(-abs(self.stoploss), p)

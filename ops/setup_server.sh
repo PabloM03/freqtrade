@@ -20,6 +20,9 @@ BASE="$(cd "$(dirname "$0")/.." && pwd)"
 OPS="$BASE/ops"
 ENV_FILE="$OPS/.env"
 CRON_CMD="10 0 * * * $OPS/cron_daily.sh >> $BASE/logs/cron_daily.log 2>&1"
+# Hyperopt trimestral: 1 ene, 1 abr, 1 jul, 1 oct a las 02:00 UTC (ventana últimos 24 meses)
+# NO auto-despliega — resultado queda en logs/hyperopt_*.log para revisión manual
+CRON_HYPEROPT="0 2 1 1,4,7,10 * $OPS/run_hyperopt.sh >> $BASE/logs/hyperopt_cron.log 2>&1"
 
 echo "======================================================"
 echo "  Freqtrade Server Setup"
@@ -70,16 +73,19 @@ fi
 echo "[setup] ops/.env:"
 cat "$ENV_FILE" | grep -v "^#" | grep "=" | sed 's/=.*/=***/'
 
-# 4. Hacer ejecutable cron_daily.sh
+# 4. Hacer ejecutables los scripts ops
 chmod +x "$OPS/cron_daily.sh"
+chmod +x "$OPS/run_hyperopt.sh"
 
-# 5. Registrar cron (evita duplicados)
+# 5. Registrar crons (evita duplicados)
 TMPFILE=$(mktemp)
-crontab -l 2>/dev/null | grep -v "cron_daily.sh" > "$TMPFILE" || true
+crontab -l 2>/dev/null | grep -v "cron_daily.sh" | grep -v "run_hyperopt.sh" > "$TMPFILE" || true
 echo "$CRON_CMD" >> "$TMPFILE"
+echo "$CRON_HYPEROPT" >> "$TMPFILE"
 crontab "$TMPFILE"
 rm "$TMPFILE"
-echo "[setup] Cron registrado: $CRON_CMD"
+echo "[setup] Cron diario:     $CRON_CMD"
+echo "[setup] Cron trimestral: $CRON_HYPEROPT"
 
 # 6. Test inmediato del pipeline
 echo ""
@@ -88,6 +94,8 @@ python3 "$OPS/analyze_news.py" --dry-run
 
 echo ""
 echo "======================================================"
-echo "  Setup completo. El pipeline correrá cada día a 00:10 UTC."
-echo "  Para ver logs: tail -f $BASE/logs/cron_daily.log"
+echo "  Setup completo. Pipeline:"
+echo "    - Diario 00:10 UTC: fetch_sentiment + analyze_news + validate_pairs (lunes)"
+echo "    - Trimestral 02:00 UTC (1 ene/abr/jul/oct): hyperopt (24 meses, sin auto-deploy)"
+echo "  Logs: $BASE/logs/"
 echo "======================================================"
