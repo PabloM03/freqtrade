@@ -49,7 +49,16 @@ echo " Log: $LOG"
 echo "================================================================"
 cd "$BASE"
 
-CONF="-c config.base.json -c config.backtest.json -c ops/config.secrets.json"
+# Auto-detectar config.secrets.json (raíz en local, ops/ en servidor)
+if [ -f "ops/config.secrets.json" ]; then
+    SECRETS="ops/config.secrets.json"
+elif [ -f "config.secrets.json" ]; then
+    SECRETS="config.secrets.json"
+else
+    echo "ERROR: no se encuentra config.secrets.json ni ops/config.secrets.json"
+    exit 1
+fi
+CONF="-c config.base.json -c config.backtest.json -c $SECRETS"
 
 # 1. Actualizar datos (desde 2022 para tener datos de validación OOS)
 echo ""
