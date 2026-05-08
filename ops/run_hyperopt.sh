@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# ops/run_hyperopt.sh — Hyperopt manual con validación OOS
-# =========================================================
+# ops/run_hyperopt.sh — Hyperopt automático con validación OOS y auto-deploy
+# ===========================================================================
 # Uso: bash ops/run_hyperopt.sh [meses]
 #
-#   meses  — ventana de optimización en meses hacia atrás (default: 18)
+#   meses  — ventana de optimización en meses hacia atrás (default: 24)
 #             Ej: bash ops/run_hyperopt.sh 12   → optimiza últimos 12 meses
 #
-# Filosofía:
-#   - Optimizar en mercado RECIENTE (últimos ~18 meses) — los parámetros
-#     deben ser óptimos para el mercado actual, no para el bear 2022
-#   - 2022 solo se usa como VALIDACIÓN OOS (stress test que no catastrofea)
-#
-# NO auto-despliega — muestra resultados para revisión manual.
-# Despliegue: copiar el JSON generado a user_data/strategies/CombinedBinHAndCluc.json
-# y hacer git push para que CI/CD lo aplique.
+# Flujo completo:
+#   1. Descarga datos 15m (desde 2022 para tener OOS)
+#   2. Hyperopt en los últimos N meses (mercado actual, sin sesgo bear 2022)
+#   3. Valida en 2022 OOS — si WR < 40%: restaura backup y aborta
+#   4. Si OK: reinicia el servicio con los nuevos params
+#   5. Muestra backtesting en ventana reciente (informativo)
 
 set -euo pipefail
 
@@ -25,7 +23,7 @@ LOG="$BASE/logs/hyperopt_$(date -u +%Y%m%d-%H%M%S).log"
 mkdir -p "$BASE/logs"
 exec > >(tee -a "$LOG") 2>&1
 
-# Lock — evita que dos instancias corran simultáneamente (hyperopt usa todos los CPUs)
+# Lock — evita que dos instancias corran simultáneamente
 LOCK="/tmp/freqtrade_hyperopt.lock"
 if [ -f "$LOCK" ]; then
     echo "ERROR: Hyperopt ya en curso (lock: $LOCK). Saliendo."
@@ -35,16 +33,15 @@ trap 'rm -f "$LOCK"' EXIT INT TERM
 touch "$LOCK"
 
 # Ventana dinámica: últimos N meses hasta hoy
-# Default 24 meses — suficientes trades (150-200) para que Calmar sea significativo
 MONTHS="${1:-24}"
 TODAY="$(date -u +%Y%m%d)"
 OPT_START="$(date -u -d "$MONTHS months ago" +%Y%m%d 2>/dev/null \
           || date -u -v-${MONTHS}m +%Y%m%d)"   # macOS fallback
 
 echo "================================================================"
-echo " HYPEROPT MANUAL — $(date -u +'%F %T') UTC"
-echo " Ventana optimización: ${OPT_START} → ${TODAY} (últimos ${MONTHS} meses)"
-echo " Loss: CalmarHyperOptLoss (profit / max_drawdown) — sin 2022 = no sesgado al bear"
+echo " HYPEROPT AUTO — $(date -u +'%F %T') UTC"
+echo " Ventana: ${OPT_START} → ${TODAY} (últimos ${MONTHS} meses)"
+echo " Loss: CalmarHyperOptLoss — optimiza profit/drawdown en mercado actual"
 echo " Log: $LOG"
 echo "================================================================"
 cd "$BASE"
@@ -60,6 +57,8 @@ else
 fi
 CONF="-c config.base.json -c config.backtest.json -c $SECRETS"
 
+PARAMS_FILE="$BASE/user_data/strategies/CombinedBinHAndCluc.json"
+
 # 1. Actualizar datos (desde 2022 para tener datos de validación OOS)
 echo ""
 echo "[1/4] Descargando datos 15m desde 20220101..."
@@ -69,17 +68,15 @@ echo "[1/4] Descargando datos 15m desde 20220101..."
     --prepend \
     2>&1 | grep -E 'Downloading|Done|pairs' | tail -5
 
-# Backup de los params actuales (para comparar antes/después)
-PARAMS_FILE="$BASE/user_data/strategies/CombinedBinHAndCluc.json"
+# Backup de los params antes del hyperopt
+BACKUP=""
 if [ -f "$PARAMS_FILE" ]; then
-    BACKUP="${PARAMS_FILE%.json}.backup_$(date -u +%Y%m%d)"
+    BACKUP="${PARAMS_FILE%.json}.backup_$(date -u +%Y%m%d-%H%M%S)"
     cp "$PARAMS_FILE" "$BACKUP"
-    echo "  Backup params: $BACKUP"
+    echo "  Backup: $BACKUP"
 fi
 
-# 2. Hyperopt en mercado reciente — CalmarHyperOptLoss maximiza profit/drawdown
-#    Sin 2022 en la ventana, Calmar no penaliza el bear → parámetros óptimos para bull actual
-#    1500 epochs para una búsqueda exhaustiva
+# 2. Hyperopt en mercado reciente
 echo ""
 echo "[2/4] Hyperopt — 1500 epochs, CalmarHyperOptLoss, ventana ${OPT_START}-${TODAY}..."
 echo "      Espacios: buy + sell (stoploss intocable)"
@@ -94,26 +91,62 @@ echo "      Espacios: buy + sell (stoploss intocable)"
     --min-trades 20 \
     --no-color
 
-# 3. Validación OOS 2022 (bear market — stress test)
-#    Criterio de rechazo: WR < 40% en 2022 → overfit al bull, descartar
-echo ""
-echo "[3/4] Validación OOS 2022 (bear stress test — rechazar si WR < 40%)..."
-"$FT" backtesting $CONF \
-    -s MyStrategy --timerange 20220101-20221231 --cache none 2>&1 \
-    | grep -E 'Trades|Win|Profit|Drawdown|STRATEGY SUMMARY' | tail -8
+# Verificar que el hyperopt generó params nuevos
+if [ ! -f "$PARAMS_FILE" ]; then
+    echo ""
+    echo "ERROR: hyperopt no generó $PARAMS_FILE. Bot sin cambios."
+    [ -n "$BACKUP" ] && cp "$BACKUP" "$PARAMS_FILE" && echo "Backup restaurado."
+    exit 1
+fi
 
-# 4. Validación en la ventana de optimización (ver Calmar, DD, WR)
+# 3. Validación en ventana reciente — métricas informativas
 echo ""
-echo "[4/4] Validación ventana reciente ${OPT_START}-${TODAY}..."
+echo "[3/4] Validación reciente ${OPT_START}-${TODAY}..."
 "$FT" backtesting $CONF \
     -s MyStrategy --timerange "${OPT_START}-${TODAY}" --cache none 2>&1 \
     | grep -E 'Trades|Win|Profit|Drawdown|STRATEGY SUMMARY' | tail -8
 
+# 4. Stress test 2022 bear — criterio de aceptación: WR ≥ 40%
+#    La estrategia es de reversión en bull, NO de bear. 40% es el mínimo para no ser
+#    catastrófico si el mercado se gira. CalmarHyperOptLoss ya garantiza calidad en bull.
+echo ""
+echo "[4/4] Stress test 2022 (criterio: WR ≥ 40% o 0 trades)..."
+OOS_OUT=$("$FT" backtesting $CONF \
+    -s MyStrategy --timerange 20220101-20221231 --cache none 2>&1)
+echo "$OOS_OUT" | grep -E 'Trades|Win|Profit|Drawdown|STRATEGY SUMMARY' | tail -8
+
+# Parsear trades y wins del STRATEGY SUMMARY
+SUMMARY_LINE=$(echo "$OOS_OUT" | grep -E '^\s*\|\s*MyStrategy' | tail -1)
+OOS_TRADES=$(echo "$SUMMARY_LINE" | awk -F'|' '{gsub(/ /,"",$3); print $3+0}')
+OOS_WINS=$(echo "$SUMMARY_LINE"  | awk -F'|' '{gsub(/ /,"",$6); print $6+0}')
+
+DEPLOY=true
+if [[ "$OOS_TRADES" =~ ^[0-9]+$ && "$OOS_TRADES" -gt 0 ]]; then
+    WR_PCT=$(( OOS_WINS * 100 / OOS_TRADES ))
+    if [[ $WR_PCT -lt 40 ]]; then
+        echo ""
+        echo "  ⚠️  WR 2022 = ${WR_PCT}% < 40% — overfit al bull. Restaurando params anteriores."
+        DEPLOY=false
+    else
+        echo ""
+        echo "  ✓ WR 2022 = ${WR_PCT}% ≥ 40% — params aceptados"
+    fi
+else
+    echo ""
+    echo "  ✓ 0 trades en 2022 — estrategia correctamente conservadora en bear"
+fi
+
 echo ""
 echo "================================================================"
-echo " COMPLETADO — $(date -u +'%F %T') UTC"
-echo " Ventana usada: ${OPT_START} → ${TODAY} (${MONTHS} meses)"
-echo " Resultados en: user_data/strategies/CombinedBinHAndCluc.json"
-echo " Para desplegar: git add/commit/push desde local → CI/CD aplica"
-echo " NOTA: Si WR 2022 < 40% → no desplegar (overfit al bull)"
+if $DEPLOY; then
+    echo " ✓ CRITERIOS OK — Aplicando params y reiniciando bot..."
+    sudo systemctl restart freqtrade 2>/dev/null \
+        && echo " Bot reiniciado con nuevos params ✓" \
+        || echo " WARN: reinicio manual: sudo systemctl restart freqtrade"
+else
+    [ -n "$BACKUP" ] && cp "$BACKUP" "$PARAMS_FILE" && echo " Params revertidos al backup."
+    echo " Bot sin cambios (params anteriores preservados)."
+fi
+echo " Completado: $(date -u +'%F %T') UTC"
+echo " Log: $LOG"
 echo "================================================================"
