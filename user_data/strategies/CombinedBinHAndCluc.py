@@ -654,7 +654,7 @@ class MyStrategy(IStrategy):
             # Tendencia establecida: ADX alto + Plus_DI dominante
             (dataframe['adx'] > 25) &
             (dataframe['plus_di'] > dataframe['minus_di'] * 1.15) &
-            # Alineación EMA: EMA80 > EMA200
+            # Alineación EMA: EMA80 > EMA200 — tendencia media-larga establecida
             (dataframe['ema_fast'] > dataframe['ema_slow']) &
             # RSI en zona tendencia (no sobrecomprado)
             (dataframe['rsi'] > 52) & (dataframe['rsi'] < 72) &
@@ -1043,11 +1043,9 @@ class MyStrategy(IStrategy):
         if p <= STOPLOSS_ABS:
             return -0.001
 
-        # ---- Stop inteligente para trades de tendencia (L_trend_breakout) ----
-        # Trail dinámico desde el inicio: ATR × velocidad del mercado (la "derivada").
-        # roc5 alto  → trail amplio (mercado acelerando, no salir del cohete)
-        # roc5 bajo  → trail ajustado (momentum frenando, asegurar beneficio)
-        # Pérdidas cortadas rápido por ATR: ~-3% BTC, ~-7% memes — evita drawdowns grandes.
+        # ---- Stop para trades de tendencia (L_trend_breakout) ----
+        # ATR × velocidad: trail proporcional al movimiento del mercado.
+        # Amplio en momentum fuerte (cohete), ajustado si frena.
         if getattr(trade, 'enter_tag', None) and str(trade.enter_tag).startswith('L_'):
             try:
                 df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
@@ -1055,9 +1053,9 @@ class MyStrategy(IStrategy):
                 atr_pct = float(last['atr']) / max(current_rate, 1e-9)
                 roc5 = float(last['roc5'])
                 base_trail = max(0.025, min(0.07, 2.5 * atr_pct))
-                if roc5 > 2.0:    vel_mult = 1.5   # cohete
-                elif roc5 > 1.0:  vel_mult = 1.2   # fuerte
-                elif roc5 < -0.5: vel_mult = 0.75  # frenando
+                if roc5 > 2.0:    vel_mult = 1.5
+                elif roc5 > 1.0:  vel_mult = 1.2
+                elif roc5 < -0.5: vel_mult = 0.75
                 else:             vel_mult = 1.0
                 trail = min(0.08, base_trail * vel_mult)
             except Exception:

@@ -60,13 +60,15 @@ CONF="-c config.base.json -c config.backtest.json -c $SECRETS"
 PARAMS_FILE="$BASE/user_data/strategies/CombinedBinHAndCluc.json"
 
 # 1. Actualizar datos (desde 2022 para tener datos de validación OOS)
+# timeout 900s (15 min) — download-data a veces no cierra el pipe al terminar (bug freqtrade)
 echo ""
-echo "[1/4] Descargando datos 15m desde 20220101..."
-"$FT" download-data $CONF \
+echo "[1/4] Descargando datos 15m desde 20220101 (timeout 15min)..."
+timeout 900 "$FT" download-data $CONF \
     --timeframes 15m \
     --timerange "20220101-${TODAY}" \
     --prepend \
-    2>&1 | grep -E 'Downloading|Done|pairs' | tail -5
+    2>&1 | grep -E 'Downloading|Done|pairs|Error' | tail -10 || true
+echo "  Descarga completada (o timeout alcanzado — datos existentes son suficientes)"
 
 # Backup de los params antes del hyperopt
 BACKUP=""
