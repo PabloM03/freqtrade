@@ -7,16 +7,21 @@
   "exchange": {
     "pair_whitelist": [
       "BTC/USDC",
-      "APE/USDC",
+      "BONK/USDC",
+      "WIF/USDC",
+      "TURBO/USDC",
+      "PNUT/USDC",
       "PENGU/USDC",
-      "RUNE/USDC",
-      "EIGEN/USDC",
-      "ENA/USDC",
       "FET/USDC",
-      "GIGGLE/USDC",
+      "ACT/USDC",
       "HBAR/USDC",
       "JTO/USDC",
-      "TON/USDC"
+      "LDO/USDC",
+      "LINK/USDC",
+      "NEAR/USDC",
+      "OP/USDC",
+      "TON/USDC",
+      "SPK/USDC"
     ]
   }
 }

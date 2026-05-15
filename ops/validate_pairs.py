@@ -59,10 +59,16 @@ def _find_freqtrade() -> list[str]:
 
 FREQTRADE = _find_freqtrade()
 
-MIN_WR = 0.70
+# Criterios para AÑADIR un par nuevo (no en whitelist actual)
+MIN_WR = 0.75
 MIN_TRADES = 3
-MIN_AVG_PROFIT = 0.5
-MIN_TOTAL_PROFIT = 0
+MIN_AVG_PROFIT = 0.8
+MIN_TOTAL_PROFIT = 5
+
+# Criterios para ELIMINAR un par ya validado (en whitelist actual)
+# Requiere evidencia sólida de fallo — 1-2 malos trades no son suficientes
+REMOVE_MIN_TRADES = 8   # necesita al menos 8 trades para juzgar
+REMOVE_MAX_WR = 0.50    # WR por debajo del 50% = claramente malo
 
 
 def run(cmd: list[str], cwd=ROOT, timeout=300) -> tuple[int, str, str]:
@@ -190,18 +196,32 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
         tmp_cfg.unlink(missing_ok=True)
 
 
-def evaluate(stats: dict) -> tuple[bool, str]:
+def evaluate(stats: dict, existing: bool = False) -> tuple[bool, str]:
+    """
+    existing=True  → criterio de ELIMINACIÓN (requiere evidencia sólida de fallo)
+    existing=False → criterio de ADICIÓN (nueva oportunidad, estándar normal)
+    """
     if stats["trades"] == 0:
         return False, "0 trades"
-    if stats["trades"] < MIN_TRADES:
-        return False, f"solo {stats['trades']} trades"
-    if stats["wr"] < MIN_WR:
-        return False, f"WR {stats['wr']*100:.1f}%"
-    if stats["total_profit"] <= MIN_TOTAL_PROFIT:
-        return False, f"profit ${stats['total_profit']:.2f} ≤ 0"
-    if stats["avg_profit"] < MIN_AVG_PROFIT:
-        return False, f"avg {stats['avg_profit']:.2f}%"
-    return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+    if existing:
+        # Par ya en whitelist: solo eliminar si hay ≥8 trades Y WR < 50%
+        if stats["trades"] < REMOVE_MIN_TRADES:
+            # Pocos trades en la ventana = mercado quieto, no suficiente para juzgar
+            return None, f"solo {stats['trades']}T — insuficiente para juzgar (necesita ≥{REMOVE_MIN_TRADES})"
+        if stats["wr"] < REMOVE_MAX_WR:
+            return False, f"WR {stats['wr']*100:.1f}% < {REMOVE_MAX_WR*100:.0f}% con {stats['trades']}T"
+        return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+    else:
+        # Par nuevo: criterio estándar de adición
+        if stats["trades"] < MIN_TRADES:
+            return None, f"solo {stats['trades']} trades"
+        if stats["wr"] < MIN_WR:
+            return False, f"WR {stats['wr']*100:.1f}%"
+        if stats["total_profit"] <= MIN_TOTAL_PROFIT:
+            return False, f"profit ${stats['total_profit']:.2f} ≤ ${MIN_TOTAL_PROFIT}"
+        if stats["avg_profit"] < MIN_AVG_PROFIT:
+            return False, f"avg {stats['avg_profit']:.2f}%"
+        return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
 
 
 def overwrite_whitelist(new_whitelist: list[str]):
@@ -216,7 +236,7 @@ def main():
     parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USDC) — no sobreescribe")
     parser.add_argument("--dry-run", action="store_true", help="Muestra resultado sin modificar configs")
     parser.add_argument("--no-download", action="store_true", help="No descarga datos nuevos")
-    default_timerange = f"{(date.today() - timedelta(days=182)).strftime('%Y%m%d')}-{date.today().strftime('%Y%m%d')}"
+    default_timerange = f"{(date.today() - timedelta(days=365)).strftime('%Y%m%d')}-{date.today().strftime('%Y%m%d')}"
     parser.add_argument("--timerange", default=default_timerange)
     args = parser.parse_args()
 
@@ -236,6 +256,7 @@ def main():
 
     print(f"\nCandidatos a evaluar: {len(candidates)}")
 
+    current_wl_set = set(get_current_whitelist())
     approved = []
     rejected = []
     no_data  = []
@@ -256,33 +277,33 @@ def main():
                 no_data.append(pair)
                 continue
 
+        is_existing = f"{coin}/USDC" in current_wl_set
         stats = run_backtest_single(pair, args.timerange)
         if stats is None:
             print(f"  ❌ Backtest falló")
             no_data.append(pair)
             continue
 
-        passed, reason = evaluate(stats)
-        if passed:
+        passed, reason = evaluate(stats, existing=is_existing)
+        if passed is True:
             print(f"  ✅ PASA: {reason}")
             approved.append((pair, stats))
+        elif passed is None:
+            # Inconcluso: no hay suficiente evidencia para añadir ni para eliminar
+            print(f"  ⏭️  INCONCLUSO: {reason}")
+            no_data.append(pair)
         else:
-            if stats["trades"] < MIN_TRADES:
-                print(f"  ⏭️  {reason} — sin datos suficientes, ignorado")
-                no_data.append(pair)
-            else:
-                print(f"  ❌ NO PASA: {reason}")
-                rejected.append((pair, stats, reason))
+            print(f"  ❌ NO PASA: {reason}")
+            rejected.append((pair, stats, reason))
 
-    # Pares sin datos que ya estaban en la whitelist → se preservan.
-    # Solo se eliminan pares que fallaron explícitamente el backtest (rejected).
-    current_wl_set = set(get_current_whitelist())
+    # Pares sin datos / inconclusos que ya estaban en la whitelist → se preservan.
+    # Solo se eliminan pares con evidencia sólida de fallo (rejected).
     preserved = [p for p in no_data if p in current_wl_set and p != "BTC/USDC"]
 
     new_whitelist = (
         ["BTC/USDC"]
         + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
-        + preserved
+        + sorted(preserved)
     )
 
     print(f"\n{'='*60}")
