@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 """
-Gestión automática de la whitelist: cada ejecución reconstruye la whitelist
-desde cero con todos los pares que cumplen criterios de rendimiento.
+Gestión automática de la whitelist — diseño a prueba de automatizaciones.
 
-Diseño:
-  - La whitelist se SOBREESCRIBE cada lunes con los mejores pares del momento.
-  - La blacklist en config.base.json es SOLO MANUAL — este script nunca la toca.
-    Es la única fuente de exclusiones; no hay lista separada en el script.
-  - BTC/USDC siempre se incluye (referencia para el filtro macro_ok).
-  - Si hay cambios: reinicia freqtrade localmente y hace push a GitHub solo para
-    dejar constancia en el historial (con [skip ci] — no dispara el pipeline).
-    Cualquier rollback de un commit restaura el estado completo de la whitelist.
+Tres categorías de pares:
+
+  CORE_PAIRS      — validados manualmente, SIEMPRE en whitelist.
+                    El script los evalúa informativamente pero NUNCA los elimina.
+                    Solo se eliminan moviéndolos a pair_blacklist en config.base.json.
+
+  REJECTED_PAIRS  — probados y rechazados, o incompatibles con la estrategia.
+                    El script NUNCA los añade aunque pasen un backtest de corto plazo.
+
+  Auto-discovered — pares de Binance top-40 que no son CORE ni REJECTED.
+                    Se añaden si pasan criterios estrictos (≥3T, WR≥75%, avg≥0.8%, $5+).
+                    Se eliminan solo con evidencia sólida (≥8T, WR<50%).
 
 Flujo:
-  1. Candidatos = top-40 Binance por volumen + pares de whitelist actual
-     (excluyendo la blacklist manual)
-  2. Para cada candidato: descarga datos si no existen, corre backtest (6 meses)
-  3. Nueva whitelist = BTC + todos los que pasan criterios (≥3T, WR≥70%...)
-  4. Sobreescribe whitelist en config.base.json y config.backtest.json
-  5. Reinicia freqtrade localmente + push a GitHub [skip ci]
-
-Criterios de aprobación:
-  WR >= 70%, Trades >= 3, Avg profit > 0.5%, Total profit > 0
+  1. Candidatos = top-40 Binance + whitelist actual — excluidos REJECTED y blacklist manual
+  2. CORE_PAIRS: evaluar informativamente, siempre incluir en whitelist
+  3. No-CORE: backtest → añadir/preservar/eliminar según criterios
+  4. Nueva whitelist = BTC + CORE + auto-aprobados + preservados
+  5. Si hay cambios: sobreescribir configs, reiniciar bot, push [skip ci]
 
 Uso:
   python ops/validate_pairs.py                # reconstruye whitelist completa
   python ops/validate_pairs.py --dry-run      # preview sin modificar nada
   python ops/validate_pairs.py --no-download  # no descarga datos nuevos
-  python ops/validate_pairs.py --pairs BTC BONK WIF  # evalúa solo estos
+  python ops/validate_pairs.py --pairs BTC BONK WIF  # evalúa solo estos (sin sobreescribir)
 """
 import argparse
 import json
@@ -47,7 +46,9 @@ CONFIG_SECRETS = next(
     ROOT / "config.secrets.json",
 )
 
-# Freqtrade binary: busca en conda envs conocidos, fallback a conda run
+# ---------------------------------------------------------------------------
+# Freqtrade binary
+# ---------------------------------------------------------------------------
 def _find_freqtrade() -> list[str]:
     for candidate in [
         "/home/ubuntu/miniconda3/envs/freqtrade/bin/freqtrade",
@@ -59,21 +60,51 @@ def _find_freqtrade() -> list[str]:
 
 FREQTRADE = _find_freqtrade()
 
-# Criterios para AÑADIR un par nuevo (no en whitelist actual)
-MIN_WR = 0.75
-MIN_TRADES = 3
-MIN_AVG_PROFIT = 0.8
-MIN_TOTAL_PROFIT = 5
+# ---------------------------------------------------------------------------
+# Listas de control — la única forma de mover un par entre categorías es
+# editando este fichero manualmente y haciendo commit.
+# ---------------------------------------------------------------------------
 
-# Criterios para ELIMINAR un par ya validado (en whitelist actual)
-# Requiere evidencia sólida de fallo — 1-2 malos trades no son suficientes
-REMOVE_MIN_TRADES = 8   # necesita al menos 8 trades para juzgar
-REMOVE_MAX_WR = 0.50    # WR por debajo del 50% = claramente malo
+# Validados manualmente — backtest completo + WR histórica sólida.
+# SIEMPRE en whitelist; el script nunca los elimina automáticamente.
+CORE_PAIRS = {
+    "BONK", "WIF", "TURBO", "PNUT", "PENGU", "FET", "ACT", "HBAR",
+    "JTO", "LDO", "LINK", "NEAR", "OP", "TON", "SPK",
+}
+
+# Probados y rechazados, o incompatibles estructuralmente.
+# El script NUNCA los añade aunque superen el backtest de corto plazo.
+REJECTED_PAIRS = {
+    # Grandes caps — demasiado estables, nunca disparan la estrategia
+    "TRX", "CFG", "BNB",
+    # Testados y fallaron (memoria histórica)
+    "SOL", "PEPE", "SHIB", "DOGE", "ADA", "ETH", "XRP", "AVAX", "LTC",
+    "MEME", "NEIRO", "TIA", "WLD", "DYDX", "DOT", "GUN", "AAVE", "TAO",
+    "ENA", "ENJ", "BLUR", "ZRO", "FLOKI", "LUNC", "LUNA",
+    # Añadidos por el auto-script en bull market con datos insuficientes
+    "APE", "RUNE", "GIGGLE", "EIGEN", "RENDER",
+}
+
+# ---------------------------------------------------------------------------
+# Criterios de evaluación
+# ---------------------------------------------------------------------------
+
+# Para AÑADIR un par no-core nuevo
+ADD_MIN_TRADES = 3
+ADD_MIN_WR = 0.75
+ADD_MIN_AVG_PROFIT = 0.8   # %
+ADD_MIN_TOTAL_PROFIT = 5   # USD
+
+# Para ELIMINAR un par no-core ya en whitelist
+# Requiere evidencia sólida — 1-2 malos trades en bull market no justifican sacar un par
+REMOVE_MIN_TRADES = 8
+REMOVE_MAX_WR = 0.50
 
 
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
 def run(cmd: list[str], cwd=ROOT, timeout=300) -> tuple[int, str, str]:
-    # os.setsid crea un grupo de proceso propio → os.killpg mata todo el árbol
-    # en caso de timeout (evita procesos freqtrade huérfanos)
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, preexec_fn=os.setsid,
@@ -196,32 +227,28 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
         tmp_cfg.unlink(missing_ok=True)
 
 
-def evaluate(stats: dict, existing: bool = False) -> tuple[bool, str]:
-    """
-    existing=True  → criterio de ELIMINACIÓN (requiere evidencia sólida de fallo)
-    existing=False → criterio de ADICIÓN (nueva oportunidad, estándar normal)
-    """
+def evaluate_for_addition(stats: dict) -> tuple[bool | None, str]:
+    """Criterio para añadir un par NO-CORE nuevo."""
     if stats["trades"] == 0:
         return False, "0 trades"
-    if existing:
-        # Par ya en whitelist: solo eliminar si hay ≥8 trades Y WR < 50%
-        if stats["trades"] < REMOVE_MIN_TRADES:
-            # Pocos trades en la ventana = mercado quieto, no suficiente para juzgar
-            return None, f"solo {stats['trades']}T — insuficiente para juzgar (necesita ≥{REMOVE_MIN_TRADES})"
-        if stats["wr"] < REMOVE_MAX_WR:
-            return False, f"WR {stats['wr']*100:.1f}% < {REMOVE_MAX_WR*100:.0f}% con {stats['trades']}T"
-        return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
-    else:
-        # Par nuevo: criterio estándar de adición
-        if stats["trades"] < MIN_TRADES:
-            return None, f"solo {stats['trades']} trades"
-        if stats["wr"] < MIN_WR:
-            return False, f"WR {stats['wr']*100:.1f}%"
-        if stats["total_profit"] <= MIN_TOTAL_PROFIT:
-            return False, f"profit ${stats['total_profit']:.2f} ≤ ${MIN_TOTAL_PROFIT}"
-        if stats["avg_profit"] < MIN_AVG_PROFIT:
-            return False, f"avg {stats['avg_profit']:.2f}%"
-        return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+    if stats["trades"] < ADD_MIN_TRADES:
+        return None, f"solo {stats['trades']}T — insuficiente"
+    if stats["wr"] < ADD_MIN_WR:
+        return False, f"WR {stats['wr']*100:.1f}% < {ADD_MIN_WR*100:.0f}%"
+    if stats["total_profit"] <= ADD_MIN_TOTAL_PROFIT:
+        return False, f"profit ${stats['total_profit']:.2f} ≤ ${ADD_MIN_TOTAL_PROFIT}"
+    if stats["avg_profit"] < ADD_MIN_AVG_PROFIT:
+        return False, f"avg {stats['avg_profit']:.2f}% < {ADD_MIN_AVG_PROFIT}%"
+    return True, f"{stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
+
+
+def evaluate_for_removal(stats: dict) -> tuple[bool | None, str]:
+    """Criterio para eliminar un par no-core YA en whitelist. None = no hay suficientes datos."""
+    if stats["trades"] < REMOVE_MIN_TRADES:
+        return None, f"solo {stats['trades']}T — insuficiente para juzgar (necesita ≥{REMOVE_MIN_TRADES})"
+    if stats["wr"] < REMOVE_MAX_WR:
+        return True, f"eliminar: WR {stats['wr']*100:.1f}% < {REMOVE_MAX_WR*100:.0f}% con {stats['trades']}T"
+    return False, f"mantener: {stats['trades']}T, {stats['wr']*100:.1f}% WR"
 
 
 def overwrite_whitelist(new_whitelist: list[str]):
@@ -232,7 +259,7 @@ def overwrite_whitelist(new_whitelist: list[str]):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Reconstruye la whitelist con los pares que funcionan hoy")
+    parser = argparse.ArgumentParser(description="Gestión de whitelist con protección de pares core")
     parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USDC) — no sobreescribe")
     parser.add_argument("--dry-run", action="store_true", help="Muestra resultado sin modificar configs")
     parser.add_argument("--no-download", action="store_true", help="No descarga datos nuevos")
@@ -241,96 +268,145 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("🔄 RECONSTRUCCIÓN AUTOMÁTICA DE WHITELIST")
+    print("🔄 GESTIÓN AUTOMÁTICA DE WHITELIST")
     print(f"   Rango: {args.timerange}")
+    print(f"   Core pairs: {len(CORE_PAIRS)} (siempre preservados)")
+    print(f"   Rejected pairs: {len(REJECTED_PAIRS)} (nunca añadidos)")
     print("=" * 60)
 
-    excluded = get_manual_blacklist_bases() | {"BTC"}
+    blacklisted = get_manual_blacklist_bases()
+    # REJECTED se trata como blacklist para candidatos, BTC siempre incluido por separado
+    excluded_from_candidates = blacklisted | REJECTED_PAIRS | {"BTC"}
 
     if args.pairs:
-        candidates = [c.upper() for c in args.pairs if c.upper() not in excluded]
+        candidates = [c.upper() for c in args.pairs if c.upper() not in excluded_from_candidates]
     else:
-        current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()} - excluded
-        binance_top = get_binance_usdc_top(40) - excluded
+        current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()} - excluded_from_candidates
+        binance_top = get_binance_usdc_top(40) - excluded_from_candidates
         candidates = sorted(current_wl_bases | binance_top)
 
-    print(f"\nCandidatos a evaluar: {len(candidates)}")
-
     current_wl_set = set(get_current_whitelist())
-    approved = []
-    rejected = []
-    no_data  = []
 
-    for coin in candidates:
+    # --- Evaluar CORE_PAIRS (informativamente — nunca se eliminan) ---
+    print(f"\n{'='*60}")
+    print("📌 CORE PAIRS (evaluación informativa, siempre preservados)")
+    print(f"{'='*60}")
+    for coin in sorted(CORE_PAIRS):
+        if coin in blacklisted:
+            print(f"  ⛔ {coin}/USDC — en blacklist manual, excluido")
+            continue
         pair = f"{coin}/USDC"
         feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
+        if not feather.exists():
+            print(f"  📊 {pair}: sin datos locales — preservado sin evaluar")
+            continue
+        stats = run_backtest_single(pair, args.timerange)
+        if stats is None:
+            print(f"  📊 {pair}: backtest falló — preservado sin evaluar")
+        elif stats["trades"] == 0:
+            print(f"  📊 {pair}: 0 trades en ventana (mercado quieto) — preservado")
+        else:
+            should_remove, reason = evaluate_for_removal(stats)
+            if should_remove is True:
+                print(f"  ⚠️  {pair}: {reason} — AVISO (es CORE, se mantiene de todos modos)")
+            elif should_remove is None:
+                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} (datos insuficientes para juzgar)")
+            else:
+                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}")
+
+    # --- Evaluar candidatos no-CORE ---
+    # Excluir CORE_PAIRS del bucle normal (ya tratados arriba)
+    non_core_candidates = [c for c in candidates if c not in CORE_PAIRS]
+    print(f"\n{'='*60}")
+    print(f"🔍 AUTO-DISCOVERY ({len(non_core_candidates)} candidatos no-core)")
+    print(f"{'='*60}")
+
+    auto_approved = []   # nuevos o existentes no-core que pasan
+    auto_rejected = []   # existentes no-core con evidencia sólida de fallo
+    no_data_pairs = []   # sin datos suficientes
+
+    for coin in non_core_candidates:
+        pair = f"{coin}/USDC"
+        is_existing = pair in current_wl_set
+        feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
         print(f"\n{'─'*50}")
-        print(f"📊 {pair}")
+        print(f"📊 {pair}{' [en whitelist]' if is_existing else ' [nuevo]'}")
 
         if not feather.exists():
             if args.no_download:
                 print(f"  ⏭️  Sin datos locales — saltado (--no-download)")
-                no_data.append(pair)
+                no_data_pairs.append(pair)
                 continue
             if not download_pair_data(pair, args.timerange):
                 print(f"  ❌ No se pudieron descargar datos")
-                no_data.append(pair)
+                no_data_pairs.append(pair)
                 continue
 
-        is_existing = f"{coin}/USDC" in current_wl_set
         stats = run_backtest_single(pair, args.timerange)
         if stats is None:
             print(f"  ❌ Backtest falló")
-            no_data.append(pair)
+            no_data_pairs.append(pair)
             continue
 
-        passed, reason = evaluate(stats, existing=is_existing)
-        if passed is True:
-            print(f"  ✅ PASA: {reason}")
-            approved.append((pair, stats))
-        elif passed is None:
-            # Inconcluso: no hay suficiente evidencia para añadir ni para eliminar
-            print(f"  ⏭️  INCONCLUSO: {reason}")
-            no_data.append(pair)
+        if is_existing:
+            should_remove, reason = evaluate_for_removal(stats)
+            if should_remove is True:
+                print(f"  ❌ ELIMINAR: {reason}")
+                auto_rejected.append((pair, stats, reason))
+            elif should_remove is None:
+                print(f"  ⏭️  PRESERVAR: {reason}")
+                no_data_pairs.append(pair)
+            else:
+                print(f"  ✅ MANTENER: {reason}")
+                auto_approved.append((pair, stats))
         else:
-            print(f"  ❌ NO PASA: {reason}")
-            rejected.append((pair, stats, reason))
+            passed, reason = evaluate_for_addition(stats)
+            if passed is True:
+                print(f"  ✅ AÑADIR: {reason}")
+                auto_approved.append((pair, stats))
+            elif passed is None:
+                print(f"  ⏭️  SALTAR: {reason}")
+                no_data_pairs.append(pair)
+            else:
+                print(f"  ❌ RECHAZAR: {reason}")
+                auto_rejected.append((pair, stats, reason))
 
-    # Pares sin datos / inconclusos que ya estaban en la whitelist → se preservan.
-    # Solo se eliminan pares con evidencia sólida de fallo (rejected).
-    preserved = [p for p in no_data if p in current_wl_set and p != "BTC/USDC"]
-
+    # --- Construir nueva whitelist ---
+    # 1. BTC (siempre)
+    # 2. CORE_PAIRS no blacklisteados (siempre, en orden fijo)
+    # 3. Auto-aprobados (ordenados por profit descendente)
+    # 4. Existentes no-core preservados por datos insuficientes
+    core_in_wl = [f"{c}/USDC" for c in sorted(CORE_PAIRS) if c not in blacklisted]
+    preserved_non_core = [p for p in no_data_pairs if p in current_wl_set and p != "BTC/USDC"]
     new_whitelist = (
         ["BTC/USDC"]
-        + [p for p, _ in sorted(approved, key=lambda x: x[1]["total_profit"], reverse=True)]
-        + sorted(preserved)
+        + core_in_wl
+        + [p for p, _ in sorted(auto_approved, key=lambda x: x[1]["total_profit"], reverse=True)]
+        + sorted(p for p in preserved_non_core if p not in set(core_in_wl))
     )
 
+    # --- Resumen ---
     print(f"\n{'='*60}")
-    print("📋 RESULTADO")
+    print("📋 RESULTADO FINAL")
     print(f"{'='*60}")
     print(f"\n✅ Nueva whitelist ({len(new_whitelist)} pares):")
+    approved_map = {p: s for p, s in auto_approved}
     for p in new_whitelist:
-        stats_str = ""
-        for pair, stats in approved:
-            if pair == p:
-                stats_str = f"  {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}"
-        if p in preserved:
-            stats_str = "  (preservado — sin datos nuevos)"
-        print(f"  {p}{stats_str}")
+        coin = p.split("/")[0]
+        if coin in CORE_PAIRS:
+            print(f"  📌 {p}  [CORE]")
+        elif p in approved_map:
+            s = approved_map[p]
+            print(f"  🆕 {p}  {s['trades']}T, {s['wr']*100:.1f}% WR, +${s['total_profit']:.0f}")
+        else:
+            print(f"  💾 {p}  (preservado)")
 
-    if rejected:
-        print(f"\n❌ Excluidos por rendimiento ({len(rejected)}):")
-        for pair, stats, reason in rejected:
-            print(f"  {pair}: {stats['trades']}T, ${stats['total_profit']:.0f} — {reason}")
-
-    if no_data:
-        new_no_data = [p for p in no_data if p not in current_wl_set]
-        print(f"\n⏭️  Sin datos suficientes ({len(no_data)}): {', '.join(no_data)}")
-        if preserved:
-            print(f"   ↳ {len(preserved)} preservados en whitelist (ya validados previamente)")
-        if new_no_data:
-            print(f"   ↳ {len(new_no_data)} nuevos ignorados (sin historial validado)")
+    if auto_rejected:
+        print(f"\n❌ Excluidos ({len(auto_rejected)}):")
+        for pair, stats, reason in auto_rejected:
+            coin = pair.split("/")[0]
+            tag = " [CORE — ignorado]" if coin in CORE_PAIRS else ""
+            print(f"  {pair}: {reason}{tag}")
 
     if args.dry_run or args.pairs:
         print("\n⚠️  DRY RUN / modo --pairs — no se modifica ningún config")
@@ -343,29 +419,23 @@ def main():
 
     added   = set(new_whitelist) - set(current_wl)
     removed = set(current_wl) - set(new_whitelist)
-    print(f"\n🔧 Sobreescribiendo whitelist...")
+    print(f"\n🔧 Aplicando cambios...")
     if added:
         print(f"  + Añadidos: {', '.join(sorted(added))}")
     if removed:
         print(f"  - Eliminados: {', '.join(sorted(removed))}")
 
-    # Sincronizar con origin/develop antes de commitear para evitar push rejected.
-    # rsync mantiene los archivos actualizados pero no toca .git/ → HEAD puede estar
-    # desincronizado. Fetch + reset --hard pone HEAD al último commit de origin sin
-    # tocar los archivos que ya coinciden, y luego sobreescribimos la whitelist.
+    # Sincronizar con origin/develop antes de commitear (rsync no actualiza .git/)
     subprocess.run(["git", "fetch", "origin", "develop"], cwd=ROOT, capture_output=True)
     subprocess.run(["git", "reset", "--hard", "origin/develop"], cwd=ROOT, capture_output=True)
 
     overwrite_whitelist(new_whitelist)
 
-    # Reiniciar el bot localmente para que cargue la nueva whitelist.
-    # El push a GitHub es solo para historial/rollback — [skip ci] evita que el
-    # pipeline haga rsync de vuelta al servidor (los cambios ya están aquí).
     restart = subprocess.run(["sudo", "systemctl", "restart", "freqtrade"], cwd=ROOT)
     if restart.returncode == 0:
         print("\n🔄 Servicio freqtrade reiniciado con la nueva whitelist.")
     else:
-        print("\n⚠️  systemctl restart falló (código {restart.returncode}) — whitelist actualizada pero bot NO reiniciado.")
+        print(f"\n⚠️  systemctl restart falló — whitelist actualizada pero bot NO reiniciado.")
 
     subprocess.run(["git", "add", str(CONFIG_BASE), str(CONFIG_BACKTEST)], cwd=ROOT)
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=ROOT)
@@ -377,10 +447,9 @@ def main():
             parts.append(f"-{' '.join(sorted(removed))}")
         msg = f"chore(whitelist): {', '.join(parts)} [skip ci]"
         subprocess.run(["git", "commit", "-m", msg], cwd=ROOT)
-        # push origin HEAD:develop funciona desde detached HEAD (rsync no actualiza .git/)
         push = subprocess.run(["git", "push", "origin", "HEAD:develop"], cwd=ROOT)
         if push.returncode == 0:
-            print("📝 Whitelist commiteada en GitHub (solo historial — sin pipeline).")
+            print("📝 Whitelist commiteada en GitHub (historial — sin pipeline).")
         else:
             print("⚠️  Commit OK pero git push FALLÓ — revisar SSH deploy key del servidor.")
 
