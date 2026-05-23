@@ -8,7 +8,7 @@ from pathlib import Path
 # --------------------------------
 import talib.abstract as ta
 from freqtrade.strategy.interface import IStrategy
-from freqtrade.strategy import stoploss_from_open, IntParameter, DecimalParameter
+from freqtrade.strategy import merge_informative_pair, stoploss_from_open, IntParameter, DecimalParameter
 from pandas import DataFrame
 from datetime import datetime
 from typing import Optional
@@ -240,6 +240,11 @@ class MyStrategy(IStrategy):
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
 
+    # ---------------------- INFORMATIVE PAIRS (5m) ----------------------
+    def informative_pairs(self):
+        pairs = self.dp.current_whitelist()
+        return [(pair, '5m') for pair in pairs]
+
     # ---------------------- INDICADORES ----------------------
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         m = TF_MULT  # multiplicador de períodos para equivalencia temporal vs 1h
@@ -413,6 +418,29 @@ class MyStrategy(IStrategy):
         except Exception:
             dataframe['macro_ok'] = True
 
+        # --- Confirmación 5m: al menos 2 de las últimas 3 velas de 5m con RSI y precio subiendo ---
+        try:
+            df5 = self.dp.get_pair_dataframe(metadata['pair'], timeframe='5m')
+            if df5 is not None and len(df5) > 30:
+                df5 = df5.copy()
+                df5['rsi5'] = ta.RSI(df5, timeperiod=14)
+                rsi5_up   = (df5['rsi5'] > df5['rsi5'].shift(1)).astype(int)
+                close5_up = (df5['close'] > df5['close'].shift(1)).astype(int)
+                # ventana rodante de 3 velas de 5m: ≥2 con RSI subiendo y ≥2 con close subiendo
+                df5['confirm_5m'] = (
+                    (rsi5_up + rsi5_up.shift(1) + rsi5_up.shift(2) >= 2) &
+                    (close5_up + close5_up.shift(1) + close5_up.shift(2) >= 2)
+                ).astype(int)
+                dataframe = merge_informative_pair(
+                    dataframe, df5[['date', 'confirm_5m']], self.timeframe, '5m', ffill=True
+                )
+                dataframe['confirm_5m'] = dataframe['confirm_5m_5m'].fillna(0) == 1
+                dataframe.drop(columns=['confirm_5m_5m'], inplace=True, errors='ignore')
+            else:
+                dataframe['confirm_5m'] = True
+        except Exception:
+            dataframe['confirm_5m'] = True
+
         return dataframe
 
     # ---------------------- ENTRADAS (alta frecuencia, filtros relajados) ----------------------
@@ -583,7 +611,7 @@ class MyStrategy(IStrategy):
         # NO incluye anti_chase (close ≤ EMA80*0.998): tras un trough, el rebote de 1%+ puede superar EMA80.
         # La protección viene de loc_trough.shift(1) + bb_zone + recovery ≥1% en cada condición.
         # ema50_ok sigue bloqueando bear markets sostenidos a macro nivel.
-        base_filter_trough = anti_cuchillo & ~no_buy_high & ema50_ok
+        base_filter_trough = anti_cuchillo & ~no_buy_high & ema50_ok & dataframe['confirm_5m']
 
         # base_filter con tendencia para condiciones que no usan trough-shift (H, J, etc.)
         base_filter_trend = base_filter & ema50_ok
