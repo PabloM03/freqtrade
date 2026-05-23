@@ -641,32 +641,25 @@ class MyStrategy(IStrategy):
         )
         mask_J = J_ai_news & base_filter_trend & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I
 
-        # L) Trend Breakout — compra fortaleza, no debilidad.
-        # Subestrategia de tendencia para capturar rallies sostenidos donde A-J nunca disparan
-        # (RSI > 38, sin troughs profundos). Complementa la reversión sin reemplazarla.
-        #
-        # Entrada: precio rompiendo máximos de 20h con tendencia alcista establecida.
-        # Exit: trail inteligente basado en velocidad de mercado (custom_stoploss detecta 'L_').
-        # No usa anti_chase ni no_buy_high — comprar fortaleza ES la señal.
-        L_trend_breakout = (
-            # Breakout: cierre por encima del máximo 20h de ayer
-            (dataframe['close'] > dataframe['hh_20'].shift(1) * 1.002) &
-            # Tendencia establecida: ADX alto + Plus_DI dominante
-            (dataframe['adx'] > 25) &
-            (dataframe['plus_di'] > dataframe['minus_di'] * 1.15) &
-            # Alineación EMA: EMA80 > EMA200 — tendencia media-larga establecida
-            (dataframe['ema_fast'] > dataframe['ema_slow']) &
-            # RSI en zona tendencia (no sobrecomprado)
-            (dataframe['rsi'] > 52) & (dataframe['rsi'] < 72) &
-            # MACD positivo y acelerando
-            (dataframe['macdhist'] > 0) &
-            (dataframe['macdhist'] > dataframe['macdhist'].shift(1)) &
-            dataframe['ema8_slope_up'] &
-            dataframe['vol_spike']
+        # K) Vela de capitulación — mecha inferior ≥ 1.8× ATR con cuerpo pequeño.
+        # Compradores aplastaron a vendedores dentro de la misma vela: señal de suelo instantáneo.
+        # Diferencia clave vs A/B/C/F: no requiere trough confirmado el día anterior;
+        # la propia vela es la evidencia. SL -7% queda muy por debajo del extremo de la mecha.
+        K_capitulation = (
+            # Mecha inferior extrema: el precio bajó mucho pero los compradores recuperaron
+            (dataframe['lower_wick'] >= dataframe['atr'] * 1.8) &
+            # Mecha domina al cuerpo: la recuperación fue real, no un doji fino
+            (dataframe['lower_wick'] > body * 1.8) &
+            # Zona baja de BB: soporte estructural
+            (dataframe['bb_percent'] <= 0.35) &
+            # RSI no sobrecomprado (algún margen de subida)
+            (dataframe['rsi'] < 50) &
+            # Volumen confirma actividad institucional real
+            dataframe['vol_spike'] &
+            # No vela bajista grande (el cuerpo no debe ser rojo enorme)
+            ~dataframe['big_red']
         )
-        # base_filter_L: solo anti_cuchillo + ema50_ok — sin anti_chase (compramos fortaleza)
-        base_filter_L = anti_cuchillo & ema50_ok
-        mask_L = L_trend_breakout & base_filter_L & macro_ok & ~mask_A & ~mask_B & ~mask_C & ~mask_D & ~mask_E & ~mask_F & ~mask_G & ~mask_H & ~mask_I & ~mask_J
+        mask_K = K_capitulation & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_F & ~mask_H & ~mask_I & ~mask_J
 
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
@@ -698,8 +691,8 @@ class MyStrategy(IStrategy):
         dataframe.loc[mask_J, 'enter_long'] = 1
         dataframe.loc[mask_J, 'enter_tag'] = 'J_ai_news'
 
-        dataframe.loc[mask_L, 'enter_long'] = 1
-        dataframe.loc[mask_L, 'enter_tag'] = 'L_trend_breakout'
+        dataframe.loc[mask_K, 'enter_long'] = 1
+        dataframe.loc[mask_K, 'enter_tag'] = 'K_capitulation'
 
         return dataframe
 
@@ -1042,25 +1035,6 @@ class MyStrategy(IStrategy):
         # Guard: si ya estamos en pérdida mayor que el SL floor, forzar salida inmediata
         if p <= STOPLOSS_ABS:
             return -0.001
-
-        # ---- Stop para trades de tendencia (L_trend_breakout) ----
-        # ATR × velocidad: trail proporcional al movimiento del mercado.
-        # Amplio en momentum fuerte (cohete), ajustado si frena.
-        if getattr(trade, 'enter_tag', None) and str(trade.enter_tag).startswith('L_'):
-            try:
-                df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
-                last = df.iloc[-1]
-                atr_pct = float(last['atr']) / max(current_rate, 1e-9)
-                roc5 = float(last['roc5'])
-                base_trail = max(0.025, min(0.07, 2.5 * atr_pct))
-                if roc5 > 2.0:    vel_mult = 1.5
-                elif roc5 > 1.0:  vel_mult = 1.2
-                elif roc5 < -0.5: vel_mult = 0.75
-                else:             vel_mult = 1.0
-                trail = min(0.08, base_trail * vel_mult)
-            except Exception:
-                trail = 0.04
-            return stoploss_from_open(p - trail, p)
 
         # Large-caps (BTC, SOL, LINK) tienen movimientos más pequeños: trail más ajustado.
         # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
