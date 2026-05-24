@@ -236,6 +236,18 @@ class MyStrategy(IStrategy):
     buy_fg_fear          = IntParameter(15, 40, default=30, space='buy', optimize=True)
     # I) RSI crash ultra-extremo: bypass anti_chase cuando RSI < buy_i_rsi_crash
     buy_i_rsi_crash      = IntParameter(14, 22, default=18, space='buy', optimize=True)
+    # L) Tendencia — cruce EMA32/EMA80 con SL ajustado
+    buy_l_adx_min        = IntParameter(15, 30, default=20, space='buy', optimize=True)
+    buy_l_rsi_max        = IntParameter(55, 72, default=65, space='buy', optimize=True)
+    buy_l_sl             = DecimalParameter(-0.040, -0.010, default=-0.025, decimals=3, space='buy', optimize=True)
+    buy_l_trail_thr      = DecimalParameter(0.005, 0.030, default=0.010, decimals=3, space='buy', optimize=True)
+    buy_l_trail          = DecimalParameter(0.008, 0.025, default=0.012, decimals=3, space='buy', optimize=True)
+    # M) Fibonacci retracement: trough en zona 38.2-61.8% de rally reciente, en uptrend
+    buy_m_rsi_prev_max   = IntParameter(38, 58, default=48, space='buy', optimize=True)
+    buy_m_rally_min      = DecimalParameter(1.08, 1.25, default=1.12, decimals=2, space='buy', optimize=True)
+    buy_m_sl             = DecimalParameter(-0.040, -0.015, default=-0.030, decimals=3, space='buy', optimize=True)
+    buy_m_trail_thr      = DecimalParameter(0.008, 0.030, default=0.015, decimals=3, space='buy', optimize=True)
+    buy_m_trail          = DecimalParameter(0.006, 0.020, default=0.010, decimals=3, space='buy', optimize=True)
     # Salidas
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
@@ -689,6 +701,16 @@ class MyStrategy(IStrategy):
         )
         mask_K = K_capitulation & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_F & ~mask_H & ~mask_I & ~mask_J
 
+        # M DESCARTADA — probadas M_pullback, M_divergence, M_fibonacci: WR 35-62%, todas negativas.
+        # Patrón confirmado: en 15m crypto con SL -7%, cualquier señal fuera del paradigma
+        # ultra-oversold (RSI/StochRSI extremo + trough) tiene WR insuficiente.
+        mask_M = dataframe['close'] < 0  # siempre False
+
+        # L_trend DESCARTADA: EMA cross → 4T 25% WR -$12. Comprar sobre EMA80 siempre falla:
+        # el precio ya corrió y el primer pullback de confirmación toca el SL -2.5%.
+        # Misma geometría tardía que L_trend_breakout (57T 33% WR -$142). Patrón confirmado.
+        mask_L = dataframe['close'] < 0   # siempre False
+
         dataframe.loc[mask_A, 'enter_long'] = 1
         dataframe.loc[mask_A, 'enter_tag'] = 'A_local_min'
 
@@ -721,6 +743,12 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_K, 'enter_long'] = 1
         dataframe.loc[mask_K, 'enter_tag'] = 'K_capitulation'
+
+        dataframe.loc[mask_M, 'enter_long'] = 1
+        dataframe.loc[mask_M, 'enter_tag'] = 'M_divergence'
+
+        dataframe.loc[mask_L, 'enter_long'] = 1
+        dataframe.loc[mask_L, 'enter_tag'] = 'L_trend'
 
         return dataframe
 
@@ -1059,6 +1087,30 @@ class MyStrategy(IStrategy):
         **kwargs
     ) -> float:
         p = current_profit if current_profit is not None else 0.0
+
+        # Subestrategias: SL/trail propios por enter_tag (parámetros optimizados por hyperopt)
+        _subestrategias = {
+            'M_divergence': {
+                'sl':              self.buy_m_sl.value,       # -3% default (más ajustado que -7%)
+                'trail_threshold': self.buy_m_trail_thr.value,
+                'trail':           self.buy_m_trail.value,
+            },
+            'L_trend': {
+                'sl':              self.buy_l_sl.value,
+                'trail_threshold': self.buy_l_trail_thr.value,
+                'trail':           self.buy_l_trail.value,
+            },
+        }
+        _params = _subestrategias.get(getattr(trade, 'enter_tag', '') or '', None)
+        if _params:
+            _sl    = _params['sl']
+            _thr   = _params['trail_threshold']
+            _trail = _params['trail']
+            if p <= _sl:
+                return -0.001
+            if p < _thr:
+                return stoploss_from_open(_sl, p)
+            return stoploss_from_open(p - _trail, p)
 
         # Guard: si ya estamos en pérdida mayor que el SL floor, forzar salida inmediata
         if p <= STOPLOSS_ABS:
