@@ -96,9 +96,9 @@ ADD_MIN_AVG_PROFIT = 0.8   # %
 ADD_MIN_TOTAL_PROFIT = 5   # USD
 
 # Para ELIMINAR un par no-core ya en whitelist
-# Requiere evidencia sólida — 1-2 malos trades en bull market no justifican sacar un par
-REMOVE_MIN_TRADES = 8
-REMOVE_MAX_WR = 0.50
+REMOVE_MIN_TRADES = 4          # basta con 4 trades para juzgar WR
+REMOVE_MAX_WR = 0.65           # más cercano al umbral de entrada (75%)
+REMOVE_MIN_TOTAL_PROFIT = -10  # USD — eliminar si pierde >$10 con ≥3 trades (sin importar WR)
 
 
 # ---------------------------------------------------------------------------
@@ -244,11 +244,14 @@ def evaluate_for_addition(stats: dict) -> tuple[bool | None, str]:
 
 def evaluate_for_removal(stats: dict) -> tuple[bool | None, str]:
     """Criterio para eliminar un par no-core YA en whitelist. None = no hay suficientes datos."""
+    # Pérdida severa con mínimo de datos → eliminar sin esperar a REMOVE_MIN_TRADES
+    if stats["trades"] >= 3 and stats["total_profit"] < REMOVE_MIN_TOTAL_PROFIT:
+        return True, f"eliminar: profit ${stats['total_profit']:.2f} < ${REMOVE_MIN_TOTAL_PROFIT} con {stats['trades']}T"
     if stats["trades"] < REMOVE_MIN_TRADES:
         return None, f"solo {stats['trades']}T — insuficiente para juzgar (necesita ≥{REMOVE_MIN_TRADES})"
     if stats["wr"] < REMOVE_MAX_WR:
         return True, f"eliminar: WR {stats['wr']*100:.1f}% < {REMOVE_MAX_WR*100:.0f}% con {stats['trades']}T"
-    return False, f"mantener: {stats['trades']}T, {stats['wr']*100:.1f}% WR"
+    return False, f"mantener: {stats['trades']}T, {stats['wr']*100:.1f}% WR, ${stats['total_profit']:.0f}"
 
 
 def overwrite_whitelist(new_whitelist: list[str]):
