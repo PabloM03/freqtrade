@@ -55,8 +55,11 @@
       "TON/USDC",
       "TURBO/USDC",
       "WIF/USDC",
+      "SYN/USDC",
+      "ALGO/USDC",
       "CHZ/USDC",
-      "SAGA/USDC"
+      "SAGA/USDC",
+      "SEI/USDC"
     ],
     "pair_blacklist": [
       "INJ/.*",
