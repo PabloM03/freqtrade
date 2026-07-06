@@ -88,7 +88,7 @@ echo "      Espacios: buy + sell (stoploss intocable)"
     --hyperopt-loss CalmarHyperOptLoss \
     --timerange "${OPT_START}-${TODAY}" \
     -e 1500 \
-    -j -1 \
+    -j 2 \
     --random-state 42 \
     --min-trades 20 \
     --no-color
