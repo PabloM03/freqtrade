@@ -242,12 +242,6 @@ class MyStrategy(IStrategy):
     buy_l_sl             = DecimalParameter(-0.040, -0.010, default=-0.025, decimals=3, space='buy', optimize=True)
     buy_l_trail_thr      = DecimalParameter(0.005, 0.030, default=0.010, decimals=3, space='buy', optimize=True)
     buy_l_trail          = DecimalParameter(0.008, 0.025, default=0.012, decimals=3, space='buy', optimize=True)
-    # M) Fibonacci retracement: trough en zona 38.2-61.8% de rally reciente, en uptrend
-    buy_m_rsi_prev_max   = IntParameter(38, 58, default=48, space='buy', optimize=True)
-    buy_m_rally_min      = DecimalParameter(1.08, 1.25, default=1.12, decimals=2, space='buy', optimize=True)
-    buy_m_sl             = DecimalParameter(-0.040, -0.015, default=-0.030, decimals=3, space='buy', optimize=True)
-    buy_m_trail_thr      = DecimalParameter(0.008, 0.030, default=0.015, decimals=3, space='buy', optimize=True)
-    buy_m_trail          = DecimalParameter(0.006, 0.020, default=0.010, decimals=3, space='buy', optimize=True)
     # Salidas
     sell_peak_min_profit = DecimalParameter(0.008, 0.045, default=0.020, decimals=3, space='sell', optimize=True)
     sell_hh_ema_min      = DecimalParameter(0.008, 0.055, default=0.025, decimals=3, space='sell', optimize=True)
@@ -295,6 +289,7 @@ class MyStrategy(IStrategy):
         # ADX/DI — escalado ×m: mide fuerza de tendencia sobre ventana temporal equivalente (14h)
         dataframe['rsi']      = ta.RSI(dataframe, timeperiod=14)
         dataframe['rsi_prev'] = dataframe['rsi'].shift(1)
+        dataframe['rsi_slow'] = ta.RSI(dataframe, timeperiod=14 * m)   # RSI-56 = 14h equiv
         dataframe['rsi_rising_2bars'] = (
             (dataframe['rsi'] > dataframe['rsi_prev']) &
             (dataframe['rsi_prev'] > dataframe['rsi'].shift(2))
@@ -701,10 +696,10 @@ class MyStrategy(IStrategy):
         )
         mask_K = K_capitulation & base_filter_trough & ~mask_A & ~mask_B & ~mask_C & ~mask_F & ~mask_H & ~mask_I & ~mask_J
 
-        # M DESCARTADA — probadas M_pullback, M_divergence, M_fibonacci: WR 35-62%, todas negativas.
-        # Patrón confirmado: en 15m crypto con SL -7%, cualquier señal fuera del paradigma
-        # ultra-oversold (RSI/StochRSI extremo + trough) tiene WR insuficiente.
-        mask_M = dataframe['close'] < 0  # siempre False
+        # M) DESCARTADA: 51T 54.9% WR -$322 en 2024-2025 (todas las variantes probadas negativas).
+        # EMA80 pullback en uptrend: wicks de 15m (+3/4%) alcanzan SL -7% antes de que el rebote
+        # se materialice. Probadas: M_pullback, M_divergence, M_fibonacci, M_triple, M_ema80_v1,
+        # M_rsi_slow, M_golden_cross, M_f_uptrend — WR siempre <60%. No implementar.
 
         # L_trend DESCARTADA: EMA cross → 4T 25% WR -$12. Comprar sobre EMA80 siempre falla:
         # el precio ya corrió y el primer pullback de confirmación toca el SL -2.5%.
@@ -743,9 +738,6 @@ class MyStrategy(IStrategy):
 
         dataframe.loc[mask_K, 'enter_long'] = 1
         dataframe.loc[mask_K, 'enter_tag'] = 'K_capitulation'
-
-        dataframe.loc[mask_M, 'enter_long'] = 1
-        dataframe.loc[mask_M, 'enter_tag'] = 'M_divergence'
 
         dataframe.loc[mask_L, 'enter_long'] = 1
         dataframe.loc[mask_L, 'enter_tag'] = 'L_trend'
@@ -954,7 +946,7 @@ class MyStrategy(IStrategy):
             prev  = df.iloc[-2]
 
             near_upper = (last['close'] >= last['bb_upperband'] * 0.999) or (last['high'] >= last['bb_upperband'])
-            loc_peak   = bool(last['high'] >= df['high'].rolling(6).max().iloc[-1])
+            loc_peak   = bool(last['high'] >= df['high'].rolling(6 * 4).max().iloc[-1])
             rsi_high   = (last['rsi'] >= self.SELL_RSI_PEAK)
             bear_candle= (last['close'] < last['open'])
             macd_fade  = (last['macdhist'] < prev['macdhist'])
@@ -978,7 +970,7 @@ class MyStrategy(IStrategy):
                 return "peak_exit_top_optimal"
 
             # HH + ruptura EMA8 + MACD debilitando (clásico)
-            if current_profit >= self.sell_hh_ema_min.value and (prev['high'] >= df['high'].rolling(20).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= self.SELL_RSI_HH_EMA):
+            if current_profit >= self.sell_hh_ema_min.value and (prev['high'] >= df['high'].rolling(20 * 4).max().iloc[-2]) and ema_break and macd_fade and (last['rsi'] >= self.SELL_RSI_HH_EMA):
                 return "hh_ema8_break_exit"
 
             # Rechazo de mecha grande en zona alta
@@ -1089,12 +1081,8 @@ class MyStrategy(IStrategy):
         p = current_profit if current_profit is not None else 0.0
 
         # Subestrategias: SL/trail propios por enter_tag (parámetros optimizados por hyperopt)
+        # L_trend reservada para condición de tendencia futura (actualmente siempre False)
         _subestrategias = {
-            'M_divergence': {
-                'sl':              self.buy_m_sl.value,       # -3% default (más ajustado que -7%)
-                'trail_threshold': self.buy_m_trail_thr.value,
-                'trail':           self.buy_m_trail.value,
-            },
             'L_trend': {
                 'sl':              self.buy_l_sl.value,
                 'trail_threshold': self.buy_l_trail_thr.value,
