@@ -12,21 +12,13 @@
       "FET/USDC",
       "HBAR/USDC",
       "JTO/USDC",
-      "LDO/USDC",
-      "LINK/USDC",
       "NEAR/USDC",
-      "OP/USDC",
       "PENGU/USDC",
       "PNUT/USDC",
-      "SPK/USDC",
       "TON/USDC",
       "TURBO/USDC",
       "WIF/USDC",
-      "SYN/USDC",
-      "ALGO/USDC",
-      "CHZ/USDC",
-      "SAGA/USDC",
-      "SEI/USDC"
+      "SYN/USDC"
     ]
   }
 }
