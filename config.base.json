@@ -51,6 +51,7 @@
       "TON/USDC",
       "TURBO/USDC",
       "WIF/USDC",
+      "MMT/USDC",
       "SYN/USDC"
     ],
     "pair_blacklist": [
