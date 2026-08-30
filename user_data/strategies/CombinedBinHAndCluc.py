@@ -1104,29 +1104,10 @@ class MyStrategy(IStrategy):
         if p <= STOPLOSS_ABS:
             return -0.001
 
-        # Large-caps (BTC, SOL, LINK) tienen movimientos más pequeños: trail más ajustado.
-        # Meme coins (BONK, WIF, TURBO, etc.) hacen runs de 5-20%: umbral más alto para no salir temprano.
-        _LARGECAP = {'BTC/USDC', 'SOL/USDC', 'LINK/USDC', 'ETH/USDC', 'ADA/USDC'}
-        if pair in _LARGECAP:
-            trail_threshold, trail_pct = 0.025, 0.008   # largecap: 2.5% umbral, 0.8% trail
-        else:
-            trail_threshold, trail_pct = 0.035, 0.008   # meme: 3.5% umbral, 0.8% trail
+        # Sin trailing — las salidas las gestionan custom_exit (peak_exit, hard_tp, hh_ema_break).
+        # Una vez en ganancia ≥ 2.5%, subir SL a breakeven para que el trade no se gire a pérdida,
+        # pero sin trailing ajustado que dispare en wicks de 15m antes de que cierre la señal.
+        if p >= 0.025:
+            return stoploss_from_open(0.0, p)
 
-        if p < trail_threshold:
-            return stoploss_from_open(-abs(self.stoploss), p)
-
-        if p <= 0.10:
-            trail = trail_pct
-        else:
-            try:
-                df = self.dp.get_pair_dataframe(pair=pair, timeframe=self.timeframe)
-                last = df.iloc[-1]
-                atr = float(last['atr'])
-                roc5 = float(last['roc5'])
-                trail = min(0.06, max(0.02, self.TRAIL_ATR_MULT_LOW * atr / max(current_rate, 1e-9)))
-                if float(roc5) >= self.ROC5_VERTICAL:
-                    trail = max(trail, 0.04)
-            except Exception:
-                trail = self.FALLBACK_TRAIL_DIST
-
-        return stoploss_from_open(p - trail, p)
+        return stoploss_from_open(-abs(self.stoploss), p)
