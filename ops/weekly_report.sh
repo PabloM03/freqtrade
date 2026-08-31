@@ -172,7 +172,7 @@ except Exception as e:
 # ── Infraestructura ───────────────────────────────────────────────────────────
 L.append('🔧 Infraestructura')
 try:
-    cmd = f"awk -v d=\"$(date -u -d '24 hours ago' '+%Y-%m-%d')\" '$0>=d' {base}/logs/freqtrade.log | grep -ci 'error\\|exception\\|critical' || true"
+    cmd = "journalctl -u freqtrade --since '24 hours ago' 2>/dev/null | grep -ci 'error\\|exception\\|critical' || true"
     rerr = int(subprocess.check_output(cmd,shell=True,text=True).strip() or '0')
     err_icon = '⚠️' if rerr > 20 else '✅'
     L.append(f'• Errores en log (24h): {err_icon} {rerr}')
