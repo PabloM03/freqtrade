@@ -8,13 +8,13 @@ Fuentes:
   1. Fear & Greed Index (Alternative.me) — gratis, sin key
   2. CoinGecko whale volume detector — gratis, sin key, historial 365d
   3. CoinGecko trending coins — gratis, sin key (qué coins son hot hoy)
-  4. Binance 24h volume spikes — gratis, sin key (detección de volumen anormal)
+  4. Kraken 24h volume spikes — vía ccxt (detección de volumen anormal)
   5. RSS news sentiment (Cointelegraph / Decrypt / Reddit / Google News) — gratis, sin key
 
 USO:
   python3 ops/fetch_sentiment.py              # todo
   python3 ops/fetch_sentiment.py --quick      # solo F&G
-  python3 ops/fetch_sentiment.py --trending   # solo CoinGecko trending + Binance spikes
+  python3 ops/fetch_sentiment.py --trending   # solo CoinGecko trending + Kraken spikes
   python3 ops/fetch_sentiment.py --whales     # solo CoinGecko whale detector
   python3 ops/fetch_sentiment.py --news       # solo noticias RSS
 """
@@ -267,7 +267,7 @@ def update_coingecko_trending():
 
 
 # ── 4. Kraken 24h Volume Spikes ───────────────────────────────────────────────
-def update_binance_volume_spikes():
+def update_kraken_volume_spikes():
     """
     Detecta pares USD en Kraken con volumen 24h anormalmente alto.
     Un spike de volumen suele preceder o acompañar a grandes movimientos.
@@ -287,7 +287,7 @@ def update_binance_volume_spikes():
         print(f"[Kraken] ERROR: {e}"); return
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out = DATA_DIR / "binance_volume.csv"
+    out = DATA_DIR / "kraken_volume.csv"
 
     existing_rows = []
     if out.exists():
@@ -308,7 +308,7 @@ def update_binance_volume_spikes():
         new_rows.append({
             "date": today,
             "coin": coin,
-            "vol_usdc": round(vol_usd, 0),
+            "vol_usd": round(vol_usd, 0),
             "price_chg_24h": round(price_change_pct, 2),
             "trade_count": count,
         })
@@ -316,7 +316,7 @@ def update_binance_volume_spikes():
         print(f"  {coin:8s}: vol=${vol_usd/1e6:.1f}M  {direction}{abs(price_change_pct):.1f}%")
 
     with open(out, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["date", "coin", "vol_usdc", "price_chg_24h", "trade_count"])
+        w = csv.DictWriter(f, fieldnames=["date", "coin", "vol_usd", "price_chg_24h", "trade_count"])
         w.writeheader()
         w.writerows(existing_rows + new_rows)
 
@@ -430,7 +430,7 @@ def run_ai_analysis():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick",    action="store_true", help="Solo F&G")
-    parser.add_argument("--trending", action="store_true", help="Solo CoinGecko trending + Binance spikes")
+    parser.add_argument("--trending", action="store_true", help="Solo CoinGecko trending + Kraken spikes")
     parser.add_argument("--whales",   action="store_true", help="Solo whale volume detector")
     parser.add_argument("--news",     action="store_true", help="Solo noticias RSS")
     parser.add_argument("--ai",       action="store_true", help="Solo análisis AI de noticias (Claude)")
@@ -444,7 +444,7 @@ if __name__ == "__main__":
         update_fear_greed()
     elif args.trending:
         update_coingecko_trending()
-        update_binance_volume_spikes()
+        update_kraken_volume_spikes()
     elif args.whales:
         update_whale_volume()
     elif args.news:
@@ -456,7 +456,7 @@ if __name__ == "__main__":
         update_fear_greed()
         update_whale_volume()
         update_coingecko_trending()
-        update_binance_volume_spikes()
+        update_kraken_volume_spikes()
         fetch_rss_sentiment()
         run_ai_analysis()   # análisis AI al final (más lento si hay API key)
 

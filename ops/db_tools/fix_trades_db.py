@@ -3,14 +3,14 @@
 Limpia la base de datos de trades contaminada:
 - Elimina órdenes huérfanas (pares distintos al trade real)
 - Recalcula close_profit y close_profit_abs usando solo las órdenes correctas
-- Fee Binance: 0.001 (0.1%) por lado
+- Fee histórica Binance: 0.001 (0.1%) por lado — trades pre-migración Kraken
 """
 import sqlite3
 import shutil
 
 BACKUP = "/home/ubuntu/freqtrade/trades.sqlite.bak_20260425_135827"
 OUTPUT = "/home/ubuntu/freqtrade/trades.sqlite.fixed"
-FEE = 0.001  # 0.1% Binance maker fee
+FEE = 0.001  # 0.1% fee histórica Binance (pre-migración)
 
 shutil.copy2(BACKUP, OUTPUT)
 conn = sqlite3.connect(OUTPUT)

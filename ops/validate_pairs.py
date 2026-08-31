@@ -186,10 +186,10 @@ def download_pair_data(pair_usd: str, timerange: str) -> bool:
     return True
 
 
-def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
+def run_backtest_single(pair_usd: str, timerange: str) -> dict | None:
     bt_cfg = load_json(CONFIG_BACKTEST)
-    pairs = [pair_usdc]
-    if pair_usdc != "BTC/USD":
+    pairs = [pair_usd]
+    if pair_usd != "BTC/USD":
         pairs.append("BTC/USD")
     bt_cfg["exchange"]["pair_whitelist"] = pairs
     tmp_cfg = ROOT / "config.backtest.tmp.json"
@@ -222,14 +222,14 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
         if not strat:
             return None
         trades = strat.get("trades", [])
-        pair_trades = [t for t in trades if t.get("pair") == pair_usdc]
+        pair_trades = [t for t in trades if t.get("pair") == pair_usd]
         if not pair_trades:
-            return {"pair": pair_usdc, "trades": 0, "wr": 0, "avg_profit": 0, "total_profit": 0}
+            return {"pair": pair_usd, "trades": 0, "wr": 0, "avg_profit": 0, "total_profit": 0}
         wins = sum(1 for t in pair_trades if t["profit_ratio"] > 0)
         wr = wins / len(pair_trades)
         avg_profit = sum(t["profit_ratio"] for t in pair_trades) / len(pair_trades) * 100
         total_profit = sum(t["profit_abs"] for t in pair_trades)
-        return {"pair": pair_usdc, "trades": len(pair_trades), "wr": wr,
+        return {"pair": pair_usd, "trades": len(pair_trades), "wr": wr,
                 "avg_profit": avg_profit, "total_profit": total_profit}
     finally:
         tmp_cfg.unlink(missing_ok=True)
