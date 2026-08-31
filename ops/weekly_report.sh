@@ -111,7 +111,78 @@ MEM_TOTAL=$(free -h | awk '/^Mem:/{print $2}')
 DISK_NUM=${DISK_PCT/\%/}
 if [ "$DISK_NUM" -gt 85 ] 2>/dev/null; then DISK_ICON="⚠️"; else DISK_ICON="✅"; fi
 
-# ── 7. Construir mensaje ───────────────────────────────────────────────────
+# ── 7. Sentimiento de mercado ──────────────────────────────────────────────
+SENTIMENT_INFO=$(python3 - <<'PYEOF'
+import json, csv, os, sys
+from datetime import datetime, timedelta
+
+base = '/home/ubuntu/freqtrade'
+today = datetime.utcnow().date()
+
+# Fear & Greed
+fg_path = f'{base}/user_data/data/sentiment/fear_greed.csv'
+fg_val = '?'
+fg_date = None
+fg_stale = True
+try:
+    with open(fg_path) as f:
+        reader = csv.DictReader(f)
+        row = next(reader)
+        fg_date = datetime.strptime(row['date'], '%Y-%m-%d').date()
+        fg_val = row['fear_greed']
+        fg_stale = (today - fg_date).days > 2
+except Exception as e:
+    fg_val = f'ERR:{e}'
+
+if int(fg_val) if fg_val.lstrip('-').isdigit() else 0:
+    v = int(fg_val)
+    if v < 25: fg_label = 'Extreme Fear'
+    elif v < 45: fg_label = 'Fear'
+    elif v < 55: fg_label = 'Neutral'
+    elif v < 75: fg_label = 'Greed'
+    else: fg_label = 'Extreme Greed'
+else:
+    fg_label = '?'
+
+# AI news scores
+news_path = f'{base}/user_data/data/sentiment/news_themes.json'
+top_bull = []
+top_bear = []
+news_date = None
+news_stale = True
+try:
+    history = json.loads(open(news_path).read())
+    entry = next((e for e in reversed(history) if e.get('date')), None)
+    if entry:
+        news_date = entry.get('date')
+        news_stale = (today - datetime.strptime(news_date, '%Y-%m-%d').date()).days > 2
+        signals = entry.get('coin_signals', [])
+        signals_sorted = sorted(signals, key=lambda x: float(x.get('ai_score', 0)), reverse=True)
+        top_bull = [(s['coin'], float(s.get('ai_score', 0))) for s in signals_sorted if float(s.get('ai_score', 0)) >= 0.2][:3]
+        top_bear = [(s['coin'], float(s.get('ai_score', 0))) for s in signals_sorted if float(s.get('ai_score', 0)) <= -0.2][-3:]
+except Exception as e:
+    news_date = f'ERR:{e}'
+
+fg_icon = '⚠️' if fg_stale else '✅'
+news_icon = '⚠️' if news_stale else '✅'
+
+bull_str = ', '.join(f'{c}({s:+.2f})' for c, s in top_bull) if top_bull else 'ninguno'
+bear_str = ', '.join(f'{c}({s:+.2f})' for c, s in top_bear) if top_bear else 'ninguno'
+
+print(f'{fg_icon}|{fg_val}|{fg_label}|{fg_date}|{news_icon}|{news_date}|{bull_str}|{bear_str}')
+PYEOF
+)
+
+FG_ICON=$(   echo "$SENTIMENT_INFO" | cut -d'|' -f1)
+FG_VAL=$(    echo "$SENTIMENT_INFO" | cut -d'|' -f2)
+FG_LABEL=$(  echo "$SENTIMENT_INFO" | cut -d'|' -f3)
+FG_DATE=$(   echo "$SENTIMENT_INFO" | cut -d'|' -f4)
+NEWS_ICON=$( echo "$SENTIMENT_INFO" | cut -d'|' -f5)
+NEWS_DATE=$( echo "$SENTIMENT_INFO" | cut -d'|' -f6)
+BULL_COINS=$(echo "$SENTIMENT_INFO" | cut -d'|' -f7)
+BEAR_COINS=$(echo "$SENTIMENT_INFO" | cut -d'|' -f8)
+
+# ── 8. Construir mensaje ───────────────────────────────────────────────────
 WEEK_START=$(date -u -d '7 days ago' '+%d %b')
 WEEK_END=$(date -u '+%d %b %Y')
 
@@ -131,6 +202,12 @@ ${PROFIT_ICON} *Operaciones de la semana*
 • Trades abiertos ahora: ${OPEN}
 • Mejor trade: ${BEST_PAIR} (+${BEST_PNL} USDC)
 • Peor trade: ${WORST_PAIR} (${WORST_PNL} USDC)
+
+🧠 *Sentimiento de mercado*
+• Fear & Greed: ${FG_ICON} ${FG_VAL}/100 — ${FG_LABEL} (${FG_DATE})
+• 📈 Bullish AI: ${BULL_COINS}
+• 📉 Bearish AI: ${BEAR_COINS}
+• Datos noticias: ${NEWS_ICON} ${NEWS_DATE}
 
 🔧 *Infraestructura*
 • Errores en log (24h): ${ERR_ICON} ${RECENT_ERRORS}
