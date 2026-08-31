@@ -35,7 +35,7 @@ fi
 
 echo "[cron_daily] $(date -u +'%F %T') UTC — inicio"
 
-# 1. Fear & Greed + CoinGecko trending + Binance spikes + RSS news
+# 1. Fear & Greed + CoinGecko trending + Kraken spikes + RSS news
 echo "[cron_daily] step 1: fetch_sentiment (Fear&Greed + trending + noticias)"
 "$PYTHON" "$OPS/fetch_sentiment.py" && echo "[cron_daily] fetch_sentiment OK" || echo "[cron_daily] WARN: fetch_sentiment falló (no fatal)"
 
