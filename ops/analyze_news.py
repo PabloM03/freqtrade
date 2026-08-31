@@ -150,32 +150,26 @@ VOLUME_BLACKLIST = {
 OUR_COINS = FIXED_COINS[:]
 
 
-def fetch_volume_pairs(top_n: int = 40, quote: str = "USDC") -> list:
+def fetch_volume_pairs(top_n: int = 40) -> list:
     """
-    Obtiene los top N coins por volumen USDC en Binance en las últimas 24h.
+    Obtiene los top N coins por volumen USD en Kraken en las últimas 24h.
     Mismo universo que el VolumePairList de freqtrade.
     """
     try:
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            tickers = json.loads(r.read())
-
-        usdc = [
-            t for t in tickers
-            if t["symbol"].endswith(quote) and float(t.get("quoteVolume", 0)) > 100_000
+        import ccxt
+        kraken = ccxt.kraken()
+        tickers = kraken.fetch_tickers()
+        usd = [
+            (sym.split("/")[0], t.get("quoteVolume") or 0)
+            for sym, t in tickers.items()
+            if sym.endswith("/USD") and (t.get("quoteVolume") or 0) > 100_000
         ]
-        usdc.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
-
-        coins = []
-        for t in usdc[:top_n]:
-            coin = t["symbol"][:-len(quote)]
-            if coin not in VOLUME_BLACKLIST:
-                coins.append(coin)
-        print(f"[VolumePairs] Top {len(coins)} coins por volumen USDC: {', '.join(coins[:10])}...")
+        usd.sort(key=lambda x: x[1], reverse=True)
+        coins = [coin for coin, _ in usd[:top_n] if coin not in VOLUME_BLACKLIST]
+        print(f"[VolumePairs] Top {len(coins)} coins por volumen USD: {', '.join(coins[:10])}...")
         return coins
     except Exception as e:
-        print(f"[VolumePairs] Error consultando Binance: {e}")
+        print(f"[VolumePairs] Error consultando Kraken: {e}")
         return []
 
 

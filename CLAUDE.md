@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **freqtrade** crypto trading bot configured for Binance spot trading with USDC as stake currency. The active strategy (`MyStrategy`) is implemented in `user_data/strategies/CombinedBinHAndCluc.py`.
+This is a **freqtrade** crypto trading bot configured for **Kraken spot trading with USD as stake currency**. The active strategy (`MyStrategy`) is implemented in `user_data/strategies/CombinedBinHAndCluc.py`.
 
 **Current config summary:**
-- Exchange: Binance (spot, USDC)
-- Pairs: **17 pairs** — BTC/ACT/BONK/FET/HBAR/JTO/NEAR/PENGU/PNUT/TON/TURBO/WIF/SYN/HEMI/TUT/MMT/PLUME (managed weekly by `validate_pairs.py`)
+- Exchange: **Kraken** (spot, USD) — fee: **0.26% taker** (Kraken Pro API)
+- Pairs: **13 pairs** — BTC/ACT/BONK/FET/HBAR/JTO/NEAR/PENGU/PNUT/TON/TURBO/WIF/PLUME (managed weekly by `validate_pairs.py`)
 - Timeframe: **15m**
-- Max open trades: 3 | Stake: **unlimited** (~333 USDC/trade with 1000 USDC wallet)
-- Blacklisted (losing pairs): CHZ, SEI, SPK, SAGA, OP, LINK, LDO, ALGO, INJ, ARB, XRP, AVAX, LTC, DOGE, ETH, ADA, FLOKI, SOL, PEPE, SHIB, and others
-- Dry-run: enabled (1000 USDC simulated wallet)
-- API server: `0.0.0.0:8080`
+- Max open trades: **1** | Stake: **unlimited** (~1000 USD/trade with 1000 USD wallet)
+- Blacklisted (losing pairs): CHZ, SEI, SPK, SAGA, OP, LINK, LDO, ALGO, INJ, ARB, XRP, AVAX, LTC, DOGE, ETH, ADA, FLOKI, SOL, PEPE, SHIB, and others. Also: all fiat currencies (EUR, GBP, JPY, etc.) and HEMI/MMT (not available on Kraken)
+- Dry-run: enabled (1000 USD simulated wallet) — **pending go-live**
+- API server: `0.0.0.0:8080` (pending restriction to 127.0.0.1 + SSH tunnel before go-live)
 
 ## Config Management
 
@@ -51,10 +51,10 @@ conda run -n freqtrade freqtrade backtesting \
   -c config.base.json -c config.backtest.json -c config.secrets.json \
   -s MyStrategy --timerange 20220101-20221231 --cache none
 
-# Download historical data
+# Download historical data (Kraken requiere --dl-trades, no soporta OHLCV histórico estándar)
 conda run -n freqtrade freqtrade download-data \
   -c config.base.json -c config.backtest.json \
-  --timeframes 15m --timerange 20220101-20260901 --prepend
+  --timeframes 15m --timerange 20220101-20260901 --dl-trades
 
 # Hyperopt (parameter optimization — spaces buy+sell only, stoploss is frozen)
 conda run -n freqtrade freqtrade hyperopt \
@@ -154,14 +154,14 @@ All structure/trend indicators are scaled ×4 to achieve temporal equivalence wi
 - Used ONLY as entry signal, never as a blanket blocking filter
 
 **News intelligence pipeline (live only):**
-- `ops/fetch_sentiment.py` — daily: Fear&Greed, CoinGecko trending, Binance volume spikes, RSS news
+- `ops/fetch_sentiment.py` — daily: Fear&Greed, CoinGecko trending, Kraken volume spikes, RSS news
 - `ops/analyze_news.py` — Claude API → `ai_score` per coin (–1 to +1) → `news_themes.json`
 - **F condition news gate**: blocks F_rsi_extreme if `ai_score ≤ –0.25`
 - **J condition**: direct entry if `ai_score ≥ 0.30` + technical conditions
 - **Position sizing** (`custom_stake_amount`): ai_score ≥ 0.25 → ×1.5 stake; ≤ –0.25 → ×0.6; neutral → ×1
 - In backtest: ai_score = 0 always → no effect on historical results (live only)
 
-**Backtest results (v15, 15m, 17 pairs, ~333 USDC/trade):**
+**Backtest results (v15, 15m, 13 pairs Kraken/USD, ~1000 USD/trade):**
 
 | Period | Trades | WR | Profit | CAGR | Calmar |
 |--------|--------|----|--------|------|--------|
@@ -203,10 +203,10 @@ All structure/trend indicators are scaled ×4 to achieve temporal equivalence wi
 - **Server SSH**: `ssh -i ~/oracle/ssh-key-2025-06-22.key ubuntu@151.145.35.106`
 
 ### Pairlist & weekly validation
-The active pairlist uses `StaticPairList` with 17 pairs (managed by `validate_pairs.py`). `config.backtest.json` also uses `StaticPairList` for reproducible backtests.
+The active pairlist uses `StaticPairList` with 13 pairs (managed by `validate_pairs.py`). `config.backtest.json` also uses `StaticPairList` for reproducible backtests.
 
 **`ops/validate_pairs.py`** runs every Monday at 00:10 UTC (via `cron_daily.sh`):
-- Fetches Binance top-40 USDC pairs by volume
+- Fetches Kraken top-40 USD pairs by volume (via ccxt)
 - Backtests each candidate on a rolling 1-year window
 - Adds pairs with WR ≥ 75% and ≥ 3 trades
 - Removes non-core pairs with WR < 65% (≥ 4 trades) OR profit < –$10 (≥ 3 trades)
@@ -236,7 +236,7 @@ Last successful run: **4 March 2026**. July 2026 run crashed (OOM, SIGKILL) — 
 | `ops/validate_pairs.py` | Weekly pair evaluation — backtests candidates, updates whitelist |
 | `ops/run_hyperopt.sh` | Quarterly hyperopt + OOS validation + atomic deploy |
 | `ops/analyze_news.py` | News intelligence: Claude API → ai_score per coin → `news_themes.json` |
-| `ops/fetch_sentiment.py` | Daily pipeline: Fear&Greed + CoinGecko + Binance spikes + RSS |
+| `ops/fetch_sentiment.py` | Daily pipeline: Fear&Greed + CoinGecko + Kraken spikes + RSS |
 | `ops/cron_daily.sh` | Cron 00:10 UTC: fetch_sentiment + analyze_news + validate_pairs (Mondays) |
 | `ops/trade.sh` | Production start script |
 | `ops/setup_server.sh` | One-time server setup: pip install + ops/.env + crontab |

@@ -11,12 +11,12 @@ Tres categorías de pares:
   REJECTED_PAIRS  — probados y rechazados, o incompatibles con la estrategia.
                     El script NUNCA los añade aunque pasen un backtest de corto plazo.
 
-  Auto-discovered — pares de Binance top-40 que no son CORE ni REJECTED.
+  Auto-discovered — pares de Kraken top-40 que no son CORE ni REJECTED.
                     Se añaden si pasan criterios estrictos (≥3T, WR≥75%, avg≥0.8%, $5+).
                     Se eliminan solo con evidencia sólida (≥8T, WR<50%).
 
 Flujo:
-  1. Candidatos = top-40 Binance + whitelist actual — excluidos REJECTED y blacklist manual
+  1. Candidatos = top-40 Kraken + whitelist actual — excluidos REJECTED y blacklist manual
   2. CORE_PAIRS: evaluar informativamente, siempre incluir en whitelist
   3. No-CORE: backtest → añadir/preservar/eliminar según criterios
   4. Nueva whitelist = BTC + CORE + auto-aprobados + preservados
@@ -33,7 +33,6 @@ import json
 import os
 import re
 import subprocess
-import urllib.request
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
@@ -142,32 +141,41 @@ def get_manual_blacklist_bases() -> set[str]:
     return bases
 
 
-def get_binance_usdc_top(top_n: int = 40) -> set[str]:
+FIAT_CURRENCIES = {
+    "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "KRW", "CNY",
+    "HKD", "SGD", "NOK", "SEK", "DKK", "NZD", "MXN", "BRL",
+    "INR", "USD", "XAU", "XAG", "XPT", "XPD",
+}
+
+
+def get_kraken_usd_top(top_n: int = 40) -> set[str]:
     try:
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        req = urllib.request.Request(url, headers={"User-Agent": "freqtrade-validator/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            tickers = json.loads(resp.read())
-        usdc = [t for t in tickers if t["symbol"].endswith("USDC") and not t["symbol"].endswith("BUSDC")]
-        usdc.sort(key=lambda t: float(t["quoteVolume"]), reverse=True)
+        import ccxt
+        kraken = ccxt.kraken()
+        tickers = kraken.fetch_tickers()
+        usd = [(sym, t.get("quoteVolume") or 0)
+               for sym, t in tickers.items()
+               if sym.endswith("/USD") and sym.split("/")[0] not in FIAT_CURRENCIES]
+        usd.sort(key=lambda x: x[1], reverse=True)
         bases = set()
-        for t in usdc[:top_n]:
-            base = t["symbol"].replace("USDC", "")
+        for sym, _ in usd[:top_n]:
+            base = sym.split("/")[0]
             if re.match(r"^[A-Z0-9]+$", base):
                 bases.add(base)
         return bases
     except Exception as e:
-        print(f"  ⚠️  Binance API no disponible: {e}")
+        print(f"  ⚠️  Kraken API no disponible: {e}")
         return set()
 
 
-def download_pair_data(pair_usdc: str, timerange: str) -> bool:
-    print(f"  Descargando datos para {pair_usdc}...")
+def download_pair_data(pair_usd: str, timerange: str) -> bool:
+    print(f"  Descargando datos para {pair_usd}...")
     try:
         code, _, err = run([
             *FREQTRADE, "download-data",
             "-c", str(CONFIG_BASE), "-c", str(CONFIG_BACKTEST), "-c", str(CONFIG_SECRETS),
-            "--pairs", pair_usdc, "--timeframes", "15m", "--timerange", timerange, "--prepend",
+            "--pairs", pair_usd, "--timeframes", "15m", "--timerange", timerange,
+            "--dl-trades",  # Kraken no soporta OHLCV histórico, requiere trades
         ], timeout=600)
     except subprocess.TimeoutExpired:
         print(f"  ⚠️  Timeout descargando datos (>600s) — saltado")
@@ -181,8 +189,8 @@ def download_pair_data(pair_usdc: str, timerange: str) -> bool:
 def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     bt_cfg = load_json(CONFIG_BACKTEST)
     pairs = [pair_usdc]
-    if pair_usdc != "BTC/USDC":
-        pairs.append("BTC/USDC")
+    if pair_usdc != "BTC/USD":
+        pairs.append("BTC/USD")
     bt_cfg["exchange"]["pair_whitelist"] = pairs
     tmp_cfg = ROOT / "config.backtest.tmp.json"
     save_json(tmp_cfg, bt_cfg)
@@ -263,7 +271,7 @@ def overwrite_whitelist(new_whitelist: list[str]):
 
 def main():
     parser = argparse.ArgumentParser(description="Gestión de whitelist con protección de pares core")
-    parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USDC) — no sobreescribe")
+    parser.add_argument("--pairs", nargs="+", help="Evalúa solo estos pares (sin /USD) — no sobreescribe")
     parser.add_argument("--dry-run", action="store_true", help="Muestra resultado sin modificar configs")
     parser.add_argument("--no-download", action="store_true", help="No descarga datos nuevos")
     default_timerange = f"{(date.today() - timedelta(days=365)).strftime('%Y%m%d')}-{date.today().strftime('%Y%m%d')}"
@@ -285,8 +293,8 @@ def main():
         candidates = [c.upper() for c in args.pairs if c.upper() not in excluded_from_candidates]
     else:
         current_wl_bases = {p.split("/")[0] for p in get_current_whitelist()} - excluded_from_candidates
-        binance_top = get_binance_usdc_top(40) - excluded_from_candidates
-        candidates = sorted(current_wl_bases | binance_top)
+        kraken_top = get_kraken_usd_top(40) - excluded_from_candidates
+        candidates = sorted(current_wl_bases | kraken_top)
 
     current_wl_set = set(get_current_whitelist())
 
@@ -296,10 +304,10 @@ def main():
     print(f"{'='*60}")
     for coin in sorted(CORE_PAIRS):
         if coin in blacklisted:
-            print(f"  ⛔ {coin}/USDC — en blacklist manual, excluido")
+            print(f"  ⛔ {coin}/USD — en blacklist manual, excluido")
             continue
-        pair = f"{coin}/USDC"
-        feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
+        pair = f"{coin}/USD"
+        feather = ROOT / "user_data" / "data" / "kraken" / f"{coin}_USD-15m.feather"
         if not feather.exists():
             print(f"  📊 {pair}: sin datos locales — preservado sin evaluar")
             continue
@@ -329,9 +337,9 @@ def main():
     no_data_pairs = []   # sin datos suficientes
 
     for coin in non_core_candidates:
-        pair = f"{coin}/USDC"
+        pair = f"{coin}/USD"
         is_existing = pair in current_wl_set
-        feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
+        feather = ROOT / "user_data" / "data" / "kraken" / f"{coin}_USD-15m.feather"
         print(f"\n{'─'*50}")
         print(f"📊 {pair}{' [en whitelist]' if is_existing else ' [nuevo]'}")
 
@@ -379,10 +387,10 @@ def main():
     # 2. CORE_PAIRS no blacklisteados (siempre, en orden fijo)
     # 3. Auto-aprobados (ordenados por profit descendente)
     # 4. Existentes no-core preservados por datos insuficientes
-    core_in_wl = [f"{c}/USDC" for c in sorted(CORE_PAIRS) if c not in blacklisted]
-    preserved_non_core = [p for p in no_data_pairs if p in current_wl_set and p != "BTC/USDC"]
+    core_in_wl = [f"{c}/USD" for c in sorted(CORE_PAIRS) if c not in blacklisted]
+    preserved_non_core = [p for p in no_data_pairs if p in current_wl_set and p != "BTC/USD"]
     new_whitelist = (
-        ["BTC/USDC"]
+        ["BTC/USD"]
         + core_in_wl
         + [p for p, _ in sorted(auto_approved, key=lambda x: x[1]["total_profit"], reverse=True)]
         + sorted(p for p in preserved_non_core if p not in set(core_in_wl))

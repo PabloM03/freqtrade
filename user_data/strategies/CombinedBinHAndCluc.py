@@ -411,9 +411,9 @@ class MyStrategy(IStrategy):
         # 192 barras de 15m = 48h. Solo crash extremos (Luna, FTX, macro bear), no correcciones normales.
         # Sólo activo cuando BTC está disponible en el contexto (backtest full o live).
         try:
-            btc_available = ('BTC/USDC', self.timeframe) in self.dp.available_pairs
+            btc_available = ('BTC/USD', self.timeframe) in self.dp.available_pairs
             if btc_available:
-                btc_df = self.dp.get_pair_dataframe('BTC/USDC', timeframe=self.timeframe)
+                btc_df = self.dp.get_pair_dataframe('BTC/USD', timeframe=self.timeframe)
                 if btc_df is not None and len(btc_df) > 200:
                     btc_48h_ret = btc_df['close'] / btc_df['close'].shift(192) - 1
                     btc_date_to_ret = dict(zip(btc_df['date'], btc_48h_ret))
@@ -855,14 +855,14 @@ class MyStrategy(IStrategy):
 
             # Multiplicador adicional por WR histórica del par
             _PAIR_WR_MULT = {
-                'BONK/USDC': 1.25,   # 100% WR, 8+ trades
-                'TURBO/USDC': 1.25,  # 100% WR
-                'ACT/USDC': 1.20,    # 100% WR
-                'HBAR/USDC': 1.20,   # 100% WR
-                'FET/USDC': 1.10,    # 82% WR, 11T
-                'WIF/USDC': 1.10,    # 92% WR
-                'JTO/USDC': 0.85,    # 75% WR, borderline
-                'SPK/USDC': 0.85,    # 75% WR, 4T solo
+                'BONK/USD': 1.25,   # 100% WR, 8+ trades
+                'TURBO/USD': 1.25,  # 100% WR
+                'ACT/USD': 1.20,    # 100% WR
+                'HBAR/USD': 1.20,   # 100% WR
+                'FET/USD': 1.10,    # 82% WR, 11T
+                'WIF/USD': 1.10,    # 92% WR
+                'JTO/USD': 0.85,    # 75% WR, borderline
+                'SPK/USD': 0.85,    # 75% WR, 4T solo
             }
             adjusted = adjusted * _PAIR_WR_MULT.get(pair, 1.0)
 
