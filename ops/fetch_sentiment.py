@@ -266,31 +266,25 @@ def update_coingecko_trending():
     return coins
 
 
-# ── 4. Binance 24h Volume Spikes ──────────────────────────────────────────────
+# ── 4. Kraken 24h Volume Spikes ───────────────────────────────────────────────
 def update_binance_volume_spikes():
     """
-    Detecta pares USDC en Binance con volumen 24h anormalmente alto.
-    Usa la API pública de Binance (sin key, sin registro).
+    Detecta pares USD en Kraken con volumen 24h anormalmente alto.
     Un spike de volumen suele preceder o acompañar a grandes movimientos.
     """
-    print("[Binance] Detectando spikes de volumen (API pública)...")
+    print("[Kraken] Detectando spikes de volumen...")
 
-    # Tickers de nuestros pares de interés
-    our_symbols = [
-        "BTCUSDC", "SOLUSDC", "LINKUSDC", "PEPEUSDC", "SHIBUSDC",
-        "BONKUSDC", "WIFUSDC", "TURBOUSDC", "FLOKIUSDC", "DOGEUSDC",
-    ]
+    our_coins = {
+        "BTC", "SOL", "LINK", "PEPE", "SHIB",
+        "BONK", "WIF", "TURBO", "FLOKI", "DOGE",
+    }
 
-    url = "https://api.binance.com/api/v3/ticker/24hr"
     try:
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            all_tickers = json.loads(r.read())
+        import ccxt
+        kraken = ccxt.kraken()
+        tickers = kraken.fetch_tickers()
     except Exception as e:
-        print(f"[Binance] ERROR: {e}"); return
-
-    # Filtrar nuestros pares
-    tickers = {t["symbol"]: t for t in all_tickers if t["symbol"] in our_symbols}
+        print(f"[Kraken] ERROR: {e}"); return
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out = DATA_DIR / "binance_volume.csv"
@@ -302,27 +296,31 @@ def update_binance_volume_spikes():
 
     new_rows = []
     for sym, ticker in sorted(tickers.items()):
-        coin = sym.replace("USDC", "")
-        vol_usdc = float(ticker.get("quoteVolume", 0))
-        price_change_pct = float(ticker.get("priceChangePercent", 0))
-        count = int(ticker.get("count", 0))  # number of trades
+        if not sym.endswith("/USD"):
+            continue
+        coin = sym.split("/")[0]
+        if coin not in our_coins:
+            continue
+        vol_usd = float(ticker.get("quoteVolume") or 0)
+        price_change_pct = float(ticker.get("percentage") or 0)
+        count = int(ticker.get("info", {}).get("trades", 0) if isinstance(ticker.get("info"), dict) else 0)
 
         new_rows.append({
             "date": today,
             "coin": coin,
-            "vol_usdc": round(vol_usdc, 0),
+            "vol_usdc": round(vol_usd, 0),
             "price_chg_24h": round(price_change_pct, 2),
             "trade_count": count,
         })
         direction = "↑" if price_change_pct > 0 else "↓"
-        print(f"  {coin:8s}: vol=${vol_usdc/1e6:.1f}M  {direction}{abs(price_change_pct):.1f}%  trades={count:,}")
+        print(f"  {coin:8s}: vol=${vol_usd/1e6:.1f}M  {direction}{abs(price_change_pct):.1f}%")
 
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["date", "coin", "vol_usdc", "price_chg_24h", "trade_count"])
         w.writeheader()
         w.writerows(existing_rows + new_rows)
 
-    print(f"[Binance] {len(new_rows)} pares → {out.name}")
+    print(f"[Kraken] {len(new_rows)} pares → {out.name}")
     return new_rows
 
 

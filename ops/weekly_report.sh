@@ -82,10 +82,10 @@ try:
     L.append(f'{profit_icon} Operaciones de la semana')
     L.append(f'• Trades cerrados: {total}')
     L.append(f'• Win rate: {wr} ({wins}W)')
-    L.append(f'• Profit: {profit:+.2f} USDC')
+    L.append(f'• Profit: {profit:+.2f} USD')
     L.append(f'• Trades abiertos ahora: {open_t}')
-    if best:  L.append(f'• Mejor trade:  {best[0]}  +{best[1]} USDC')
-    if worst: L.append(f'• Peor trade:   {worst[0]}  {worst[1]} USDC')
+    if best:  L.append(f'• Mejor trade:  {best[0]}  +{best[1]} USD')
+    if worst: L.append(f'• Peor trade:   {worst[0]}  {worst[1]} USD')
 except Exception as e:
     L.append(f'⚠️ Operaciones: error — {e}')
 L.append('')

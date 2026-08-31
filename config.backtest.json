@@ -6,21 +6,19 @@
   ],
   "exchange": {
     "pair_whitelist": [
-      "BTC/USDC",
-      "ACT/USDC",
-      "BONK/USDC",
-      "FET/USDC",
-      "HBAR/USDC",
-      "JTO/USDC",
-      "NEAR/USDC",
-      "PENGU/USDC",
-      "PNUT/USDC",
-      "TON/USDC",
-      "TURBO/USDC",
-      "WIF/USDC",
-      "HEMI/USDC",
-      "MMT/USDC",
-      "PLUME/USDC"
+      "BTC/USD",
+      "ACT/USD",
+      "BONK/USD",
+      "FET/USD",
+      "HBAR/USD",
+      "JTO/USD",
+      "NEAR/USD",
+      "PENGU/USD",
+      "PNUT/USD",
+      "TON/USD",
+      "TURBO/USD",
+      "WIF/USD",
+      "PLUME/USD"
     ]
   }
 }

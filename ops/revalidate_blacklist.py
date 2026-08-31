@@ -80,8 +80,8 @@ def run_backtest_single(pair_usdc: str, timerange: str) -> dict | None:
     # Tmp config: par objetivo + BTC (necesario para macro_ok filter)
     bt_cfg = load_json(CONFIG_BACKTEST)
     pairs = [pair_usdc]
-    if pair_usdc != "BTC/USDC":
-        pairs.append("BTC/USDC")
+    if pair_usdc != "BTC/USD":
+        pairs.append("BTC/USD")
     bt_cfg["exchange"]["pair_whitelist"] = pairs
     tmp_cfg = ROOT / "config.backtest.revalidate.tmp.json"
     save_json(tmp_cfg, bt_cfg)
@@ -155,7 +155,7 @@ def evaluate(stats: dict) -> tuple[bool, str]:
 
 def main():
     parser = argparse.ArgumentParser(description="Revalidación semestral de la blacklist")
-    parser.add_argument("--coins", nargs="+", help="Coins específicos a re-testear (sin /USDC)")
+    parser.add_argument("--coins", nargs="+", help="Coins específicos a re-testear (sin /USD)")
     parser.add_argument("--timerange", default="20240101-20251231",
                         help="Rango de backtest (default: 20240101-20251231 — datos completos garantizados)")
     args = parser.parse_args()
@@ -186,8 +186,8 @@ def main():
     no_data = []
 
     for coin in candidates:
-        pair = f"{coin}/USDC"
-        feather = ROOT / "user_data" / "data" / "binance" / f"{coin}_USDC-15m.feather"
+        pair = f"{coin}/USD"
+        feather = ROOT / "user_data" / "data" / "kraken" / f"{coin}_USD-15m.feather"
         print(f"{'─'*50}")
         print(f"🔍 {pair}...")
 
@@ -219,7 +219,7 @@ def main():
     if promotable:
         print(f"\n✅ CANDIDATOS A PROMOVER ({len(promotable)}) — considera añadir a whitelist:")
         for coin, stats in promotable:
-            print(f"  {coin}/USDC: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} ({stats['avg_profit']:.2f}% avg)")
+            print(f"  {coin}/USD: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} ({stats['avg_profit']:.2f}% avg)")
         print(f"\n  ➡️  Para añadir: python ops/validate_pairs.py --pairs {' '.join(c for c, _ in promotable)} --no-download --timerange 20240101-YYYYMMDD")
     else:
         print("\n  Sin candidatos a promover en este período.")
@@ -231,7 +231,7 @@ def main():
 
     if no_data:
         print(f"\n⚠️  Sin datos ({len(no_data)}): {', '.join(no_data)}")
-        print(f"   Descargar con: freqtrade download-data --pairs {' '.join(f'{c}/USDC' for c in no_data)} --timeframes 15m")
+        print(f"   Descargar con: freqtrade download-data --dl-trades --pairs {' '.join(f'{c}/USD' for c in no_data)} --timeframes 15m")
 
 
 if __name__ == "__main__":

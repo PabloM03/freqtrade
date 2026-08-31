@@ -67,7 +67,7 @@ for trade_id, pair, open_rate, close_rate, stake_amount in trades:
     profit_pct = profit_abs / stake_amount
 
     print(f"  buy_cost={buy_cost:.4f}, sell_revenue={sell_revenue:.4f}")
-    print(f"  profit_abs={profit_abs:.4f} USDC ({profit_pct*100:.4f}%)")
+    print(f"  profit_abs={profit_abs:.4f} USD ({profit_pct*100:.4f}%)")
 
     # Actualizar trades table (también cerrar trades que quedaron is_open=1 por WAL no checkpointed)
     cur.execute("""
