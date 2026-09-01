@@ -37,7 +37,21 @@
   "exchange": {
     "name": "kraken",
     "fee": 0.0026,
-    "ccxt_config": {},
+    "ccxt_config": {
+      "commonCurrencies": {
+        "ZUSD": "USD",
+        "ZEUR": "EUR",
+        "ZGBP": "GBP",
+        "ZCAD": "CAD",
+        "ZJPY": "JPY",
+        "XXBT": "BTC",
+        "XETH": "ETH",
+        "XLTC": "LTC",
+        "XXRP": "XRP",
+        "XXLM": "XLM",
+        "XXMR": "XMR"
+      }
+    },
     "ccxt_async_config": {},
     "pair_whitelist": [
       "BTC/USD",
