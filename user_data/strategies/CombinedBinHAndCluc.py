@@ -872,33 +872,9 @@ class MyStrategy(IStrategy):
             if min_stake is not None:
                 adjusted = max(adjusted, min_stake)
 
-            # Diagnóstico: loguear parámetros de entrada para detectar max_stake=0
-            logger.warning(
-                f"[DIAG] custom_stake_amount {pair}: proposed={proposed_stake:.4f} "
-                f"max_stake={max_stake:.4f} adjusted={adjusted:.4f} "
-                f"result={min(adjusted, max_stake):.4f}"
-            )
-
-            # Protección: si max_stake es 0 o negativo (wallet vacío), usar proposed_stake
-            if max_stake <= 0:
-                logger.warning(
-                    f"[DIAG] custom_stake_amount: max_stake={max_stake} para {pair} — "
-                    f"wallet posiblemente vacío, usando proposed_stake={proposed_stake}"
-                )
-                return proposed_stake
-
             return min(adjusted, max_stake)
-        except Exception as e:
-            logger.warning(f"[DIAG] custom_stake_amount excepción {pair}: {e}")
+        except Exception:
             return proposed_stake
-
-    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
-                            time_in_force: str, current_time, entry_tag, side, **kwargs) -> bool:
-        logger.warning(
-            f"[DIAG] confirm_trade_entry: {pair} amount={amount:.6f} rate={rate:.2f} "
-            f"tag={entry_tag} side={side}"
-        )
-        return True
 
     # ---------------------- EXITS (alineadas con picos/vales óptimos) ----------------------
     def custom_exit(
