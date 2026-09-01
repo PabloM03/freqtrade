@@ -12,8 +12,8 @@ This is a **freqtrade** crypto trading bot configured for **Kraken spot trading 
 - Timeframe: **15m**
 - Max open trades: **1** | Stake: **unlimited** (~1000 USD/trade with 1000 USD wallet)
 - Blacklisted (losing pairs): CHZ, SEI, SPK, SAGA, OP, LINK, LDO, ALGO, INJ, ARB, XRP, AVAX, LTC, DOGE, ETH, ADA, FLOKI, SOL, PEPE, SHIB, and others. Also: all fiat currencies (EUR, GBP, JPY, etc.) and HEMI/MMT (not available on Kraken)
-- Dry-run: enabled (1000 USD simulated wallet) — **pending go-live**
-- API server: `0.0.0.0:8080` (pending restriction to 127.0.0.1 + SSH tunnel before go-live)
+- Dry-run: **disabled** — **LIVE on Kraken** since 2026-09-01 (228.79 USD real balance)
+- API server: `0.0.0.0:8080` (pending restriction to 127.0.0.1 + SSH tunnel)
 
 ## Config Management
 
@@ -281,7 +281,9 @@ conda run -n freqtrade freqtrade backtesting \
 - **Never use `trailing_stop` JSON config** — it creates LIMIT orders in live trading. All trailing is handled by `custom_stoploss`.
 - **Always add `-c config.secrets.json`** to backtests and hyperopt — omitting it causes a Telegram config schema error.
 - `config.secrets.json` is gitignored. On the server it lives at `ops/config.secrets.json` (excluded from rsync). Copy from `config.secrets.json.example` to set up a new machine.
-- **Never delete `trades.sqlite`** — it holds dry-run trade history. At most create a backup.
+- **SQLite = 3 files, always treat together**: `trades.sqlite` (main) + `trades.sqlite-wal` (WAL) + `trades.sqlite-shm` (shared memory). Replacing only `trades.sqlite` leaves the WAL intact and SQLite replays it on top → the DB ignores your replacement. To reset or restore: **stop the bot first**, then remove/replace all 3 files together, or run `PRAGMA wal_checkpoint(TRUNCATE)` before touching them. The rsync excludes `*.sqlite*` (glob) so all 3 are preserved across deploys.
+- **Deleting a ghost trade from DB** (dry-run trade that survived a mode switch): stop the bot → `sudo sqlite3 trades.sqlite "PRAGMA wal_checkpoint(FULL);"` → `DELETE FROM orders WHERE ft_trade_id=<id>; DELETE FROM trades WHERE id=<id>;` → `PRAGMA wal_checkpoint(TRUNCATE);` → `rm -f trades.sqlite-wal trades.sqlite-shm` → restart.
+- **Never delete `trades.sqlite`** — it holds live trade history. At most create a backup. On the server, owned by root (freqtrade runs as root) — use `sudo` for sqlite3 operations.
 - When modifying `CombinedBinHAndCluc.py`, all tunable constants are at the top of the file — prefer changing those over touching the logic.
 - Use `conda run -n freqtrade` to run freqtrade — there is no `.venv`, the env is in anaconda. For direct Python: `/home/pablom03/anaconda3/envs/freqtrade/bin/python`.
 - `--timeframe-detail 5m` crashes with `informative_pairs()` KeyError — never use this flag.
