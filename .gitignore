@@ -135,3 +135,6 @@ ops/.env
 # Backup files generados automáticamente
 *.bak
 *.bak.*
+
+# Túnel SSH local (máquina-específico)
+tunnel.sh
