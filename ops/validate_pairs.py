@@ -18,7 +18,7 @@ Tres categorías de pares:
 Flujo:
   1. Candidatos = top-40 Kraken + whitelist actual — excluidos REJECTED y blacklist manual
   2. CORE_PAIRS: evaluar informativamente, siempre incluir en whitelist
-  3. No-CORE: backtest → añadir/preservar/eliminar según criterios
+  3. No-CORE: backtest 1-año + veto 3 meses → añadir/preservar/eliminar
   4. Nueva whitelist = BTC + CORE + auto-aprobados + preservados
   5. Si hay cambios: sobreescribir configs, reiniciar bot, push [skip ci]
 
@@ -88,16 +88,23 @@ REJECTED_PAIRS = {
 # Criterios de evaluación
 # ---------------------------------------------------------------------------
 
-# Para AÑADIR un par no-core nuevo
+# Para AÑADIR un par no-core nuevo (ventana 1 año — conservador)
 ADD_MIN_TRADES = 3
 ADD_MIN_WR = 0.75
 ADD_MIN_AVG_PROFIT = 0.8   # %
 ADD_MIN_TOTAL_PROFIT = 5   # USD
 
-# Para ELIMINAR un par no-core ya en whitelist
+# Para ELIMINAR un par no-core ya en whitelist (ventana 1 año)
 REMOVE_MIN_TRADES = 4          # basta con 4 trades para juzgar WR
 REMOVE_MAX_WR = 0.65           # más cercano al umbral de entrada (75%)
 REMOVE_MIN_TOTAL_PROFIT = -10  # USD — eliminar si pierde >$10 con ≥3 trades (sin importar WR)
+
+# Veto de rendimiento reciente (ventana 3 meses — reactivo)
+# Si un par falla en los últimos 3 meses, se elimina aunque el año completo sea OK
+RECENT_DAYS = 90
+RECENT_VETO_MIN_TRADES = 2       # basta con 2 trades en 3 meses para aplicar el veto
+RECENT_VETO_MAX_WR = 0.50        # WR < 50% en 3 meses → veto de eliminación
+RECENT_VETO_MIN_PROFIT = -5      # USD — pérdida > $5 en 3 meses → veto (sin importar WR)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +269,18 @@ def evaluate_for_removal(stats: dict) -> tuple[bool | None, str]:
     return False, f"mantener: {stats['trades']}T, {stats['wr']*100:.1f}% WR, ${stats['total_profit']:.0f}"
 
 
+def evaluate_recent_veto(recent: dict | None) -> tuple[bool, str]:
+    """Veto de rendimiento reciente (3 meses). Retorna (veto, motivo).
+    True = eliminar por bajo rendimiento reciente aunque el año completo sea OK."""
+    if recent is None or recent["trades"] < RECENT_VETO_MIN_TRADES:
+        return False, ""
+    if recent["total_profit"] < RECENT_VETO_MIN_PROFIT:
+        return True, f"veto 3m: profit ${recent['total_profit']:.2f} < ${RECENT_VETO_MIN_PROFIT} con {recent['trades']}T"
+    if recent["wr"] < RECENT_VETO_MAX_WR:
+        return True, f"veto 3m: WR {recent['wr']*100:.1f}% < {RECENT_VETO_MAX_WR*100:.0f}% con {recent['trades']}T"
+    return False, ""
+
+
 def overwrite_whitelist(new_whitelist: list[str]):
     for cfg_path in [CONFIG_BASE, CONFIG_BACKTEST]:
         cfg = load_json(cfg_path)
@@ -278,9 +297,13 @@ def main():
     parser.add_argument("--timerange", default=default_timerange)
     args = parser.parse_args()
 
+    recent_start = (date.today() - timedelta(days=RECENT_DAYS)).strftime("%Y%m%d")
+    recent_timerange = f"{recent_start}-{date.today().strftime('%Y%m%d')}"
+
     print("=" * 60)
     print("🔄 GESTIÓN AUTOMÁTICA DE WHITELIST")
-    print(f"   Rango: {args.timerange}")
+    print(f"   Rango principal: {args.timerange}")
+    print(f"   Rango veto reciente: {recent_timerange} ({RECENT_DAYS}d)")
     print(f"   Core pairs: {len(CORE_PAIRS)} (siempre preservados)")
     print(f"   Rejected pairs: {len(REJECTED_PAIRS)} (nunca añadidos)")
     print("=" * 60)
@@ -318,12 +341,15 @@ def main():
             print(f"  📊 {pair}: 0 trades en ventana (mercado quieto) — preservado")
         else:
             should_remove, reason = evaluate_for_removal(stats)
+            recent_stats = run_backtest_single(pair, recent_timerange)
+            veto, veto_reason = evaluate_recent_veto(recent_stats)
+            veto_tag = f" | ⚠️  {veto_reason}" if veto else ""
             if should_remove is True:
-                print(f"  ⚠️  {pair}: {reason} — AVISO (es CORE, se mantiene de todos modos)")
+                print(f"  ⚠️  {pair}: {reason}{veto_tag} — AVISO (es CORE, se mantiene de todos modos)")
             elif should_remove is None:
-                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} (datos insuficientes para juzgar)")
+                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f} (insuficiente){veto_tag}")
             else:
-                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}")
+                print(f"  ✅ {pair}: {stats['trades']}T, {stats['wr']*100:.1f}% WR, +${stats['total_profit']:.0f}{veto_tag}")
 
     # --- Evaluar candidatos no-CORE ---
     # Excluir CORE_PAIRS del bucle normal (ya tratados arriba)
@@ -361,14 +387,25 @@ def main():
 
         if is_existing:
             should_remove, reason = evaluate_for_removal(stats)
+            # Veto de rendimiento reciente (3 meses) — independiente del 1-año
+            recent_stats = run_backtest_single(pair, recent_timerange)
+            veto, veto_reason = evaluate_recent_veto(recent_stats)
+            if recent_stats:
+                recent_summary = f" | 3m: {recent_stats['trades']}T, {recent_stats['wr']*100:.1f}% WR, ${recent_stats['total_profit']:.0f}"
+            else:
+                recent_summary = " | 3m: sin datos"
+
             if should_remove is True:
-                print(f"  ❌ ELIMINAR: {reason}")
+                print(f"  ❌ ELIMINAR: {reason}{recent_summary}")
                 auto_rejected.append((pair, stats, reason))
+            elif veto:
+                print(f"  ❌ ELIMINAR (veto reciente): {veto_reason} | 1y: {stats['trades']}T, {stats['wr']*100:.1f}% WR")
+                auto_rejected.append((pair, stats, veto_reason))
             elif should_remove is None:
-                print(f"  ⏭️  PRESERVAR: {reason}")
+                print(f"  ⏭️  PRESERVAR: {reason}{recent_summary}")
                 no_data_pairs.append(pair)
             else:
-                print(f"  ✅ MANTENER: {reason}")
+                print(f"  ✅ MANTENER: {reason}{recent_summary}")
                 auto_approved.append((pair, stats))
         else:
             passed, reason = evaluate_for_addition(stats)
