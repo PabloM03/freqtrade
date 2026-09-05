@@ -41,7 +41,7 @@ except: since = '?'
 try:
     nprocs = int(subprocess.check_output(['pgrep','-c','-f','freqtrade trade'],text=True).strip())
 except: nprocs = 0
-proc_msg = '✅ 1 proceso' if nprocs <= 1 else f'⚠️ DUPLICADO — {nprocs} instancias'
+proc_msg = '✅ 1 proceso' if nprocs <= 1 else (f'✅ prod + prop ({nprocs} instancias)' if nprocs <= 2 else f'⚠️ DUPLICADO — {nprocs} instancias')
 
 try:
     df_out = subprocess.check_output(['df','-h',base],text=True).splitlines()
@@ -88,6 +88,41 @@ try:
     if worst: L.append(f'• Peor trade:   {worst[0]}  {worst[1]} USD')
 except Exception as e:
     L.append(f'⚠️ Operaciones: error — {e}')
+L.append('')
+
+# ── Bot Prop (señales dry_run) ────────────────────────────────────────────────
+try:
+    prop_status = subprocess.check_output(['systemctl','is-active','freqtrade-prop'],text=True).strip()
+except: prop_status = 'inactive'
+prop_icon = '✅' if prop_status == 'active' else '🔴'
+L.append(f'🎯 Bot Prop — señales dry_run  {prop_icon} {prop_status}')
+
+prop_db = f'{base}/tradesv3.prop.sqlite'
+if os.path.exists(prop_db):
+    try:
+        conn_p = sqlite3.connect(prop_db)
+        w7p = (datetime.utcnow()-timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        closed_p = conn_p.execute('''
+            SELECT COUNT(*), SUM(CASE WHEN close_profit_abs>0 THEN 1 ELSE 0 END),
+                   ROUND(SUM(close_profit_abs),2)
+            FROM trades WHERE is_open=0 AND close_date>?''',(w7p,)).fetchone()
+        open_p = conn_p.execute('SELECT COUNT(*) FROM trades WHERE is_open=1').fetchone()[0]
+        tot_p,win_p,pnl_p = (closed_p[0] or 0),int(closed_p[1] or 0),(closed_p[2] or 0.0)
+        wr_p = f'{win_p/tot_p*100:.1f}%' if tot_p else '—'
+        pnl_icon = '📈' if pnl_p > 0 else ('📉' if pnl_p < 0 else '➖')
+        L.append(f'• Señales 7d: {tot_p} trades  WR {wr_p}  {pnl_icon} {pnl_p:+.2f} USD (simulado)')
+        L.append(f'• Señales abiertas ahora: {open_p}')
+        recent = conn_p.execute('''
+            SELECT pair,open_date,is_open,ROUND(close_profit_abs,2)
+            FROM trades ORDER BY open_date DESC LIMIT 3''').fetchall()
+        for r in recent:
+            estado = '🟡 abierta' if r[2] else ('📈' if (r[3] or 0)>0 else '📉')
+            L.append(f'  {estado} {r[0]}  {r[1][:16]}  {(r[3] or 0):+.2f}$')
+        conn_p.close()
+    except Exception as e:
+        L.append(f'• DB prop: error — {e}')
+else:
+    L.append('• Sin datos aún (bot no arrancado o sin trades)')
 L.append('')
 
 # ── Fear & Greed ──────────────────────────────────────────────────────────────
