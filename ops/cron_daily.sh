@@ -52,6 +52,15 @@ else
     echo "[cron_daily] step 3: validate_pairs — omitido (solo lunes)"
 fi
 
+# 4. Actualización mensual de pares del bot prop — día 1 de cada mes.
+# Solo evalúa pares del universo Kraken Prop (lista hardcoded en el script).
+if [ "$(date +%d)" = "01" ]; then
+    echo "[cron_daily] step 4: validate_pairs_prop (día 1 — ventana 12 meses)"
+    PYTHONUNBUFFERED=1 "$PYTHON" "$OPS/validate_pairs_prop.py" && echo "[cron_daily] validate_pairs_prop OK" || echo "[cron_daily] WARN: validate_pairs_prop falló"
+else
+    echo "[cron_daily] step 4: validate_pairs_prop — omitido (solo día 1 de mes)"
+fi
+
 echo "[cron_daily] $(date -u +'%F %T') UTC — fin"
 
 # Rotación simple de logs (mantener últimas 2 semanas)
