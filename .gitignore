@@ -136,5 +136,7 @@ ops/.env
 *.bak
 *.bak.*
 
-# Túnel SSH local (máquina-específico)
+# Scripts locales (máquina-específicos, contienen rutas o credenciales locales)
 tunnel.sh
+ops/notify.sh
+ops/trade_manual.sh
