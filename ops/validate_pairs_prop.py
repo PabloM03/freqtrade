@@ -165,7 +165,9 @@ def restart_prop_bot():
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    log("=== inicio validate_pairs_prop ===")
+    dry_run = "--dry-run" in sys.argv
+    if dry_run:
+        log("=== inicio validate_pairs_prop [DRY RUN — sin cambios] ===")
 
     # Rango de fechas rolling
     end   = datetime.utcnow()
@@ -202,6 +204,11 @@ def main():
         sys.exit(1)
 
     log(f"Pares seleccionados ({len(new_pairs)}): {new_pairs}")
+
+    if dry_run:
+        log("[DRY RUN] Sin cambios aplicados. Ejecuta sin --dry-run para aplicar.")
+        log("=== fin validate_pairs_prop [DRY RUN] ===")
+        return
 
     # Actualizar config
     old_pairs = update_prop_config(new_pairs)
