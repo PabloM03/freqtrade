@@ -133,6 +133,9 @@
   "telegram": {
     "enabled": false
   },
+  "webhook": {
+    "enabled": false
+  },
   "api_server": {
     "enabled": true,
     "listen_ip_address": "127.0.0.1",
